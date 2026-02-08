@@ -1,4 +1,5 @@
 #include "value.h"
+#include "object.h"
 #include <iostream>
 
 namespace cxxx {
@@ -26,8 +27,7 @@ namespace cxxx {
                 std::cout << value.as.number;
                 break;
             case VAL_OBJ:
-                // TODO: Implement object printing
-                std::cout << "<obj>";
+                printObject(value);
                 break;
         }
     }

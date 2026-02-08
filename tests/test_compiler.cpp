@@ -7,23 +7,57 @@
 
 using namespace cxxx;
 
+#include "../src/vm/table.h"
+#include "../src/vm/object.h"
+
 int main() {
-    std::string source = "-1.2 + 3.4 * 5";
+    std::string source = "var result = -1.2 + 3.4 * 5;";
     Chunk chunk;
     std::cout << "Compiling: " << source << std::endl;
 
-    if (compile(source, &chunk)) {
+    // We need to pass a table for interning if we want consistency,
+    // but for single chunk test, nullptr is okay for compilation.
+    // However, VM needs globals table.
+
+    // To make sure VM uses same strings, we should share table?
+    // Actually, VM has its own strings table.
+    // If we pass nullptr to compile, it allocates new strings.
+    // When VM runs, it uses those strings as keys.
+    // VM globals table will store them.
+    // Lookup by string content requires interning or deep compare.
+    // Table uses pointer compare.
+
+    // So we MUST use a string table shared with VM.
+
+    VM vm;
+    vm.init();
+
+    std::cout << "vm address: " << &vm << std::endl;
+    std::cout << "vm.strings address: " << &vm.strings << std::endl;
+    std::cout << "vm.globals address: " << &vm.globals << std::endl;
+
+    // Passing &vm.strings now that I fixed the segfault in compiler.cpp
+    if (compile(source, &chunk, &vm.strings)) {
         std::cout << "Compilation successful." << std::endl;
         chunk.disassemble("Compiled Chunk");
 
-        VM vm;
-        vm.init();
         vm.interpret(&chunk);
 
-        Value result = vm.pop();
-        std::cout << "Result: " << result.asNumber() << std::endl;
-        // -1.2 + (3.4 * 5) = -1.2 + 17 = 15.8
-        assert(std::abs(result.asNumber() - 15.8) < 0.0001);
+        // Check global 'result'
+        ObjString* name = copyString("result", 6, &vm.strings);
+        std::cout << "Checking global 'result'. Address of name: " << name << " hash: " << name->hash << std::endl;
+        Value val;
+        if (vm.globals.get(name, &val)) {
+             std::cout << "Result: " << val.asNumber() << std::endl;
+             assert(std::abs(val.asNumber() - 15.8) < 0.0001);
+        } else {
+             std::cerr << "Global 'result' not found." << std::endl;
+             // Debug dump globals
+             std::cout << "Globals count: " << vm.globals.count << std::endl;
+             printTable(&vm.globals);
+             return 1;
+        }
+
     } else {
         std::cerr << "Compilation failed." << std::endl;
         return 1;

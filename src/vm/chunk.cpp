@@ -61,6 +61,42 @@ namespace cxxx {
             case OP_DIVIDE:
                 std::cout << "OP_DIVIDE" << std::endl;
                 return offset + 1;
+            case OP_POP:
+                std::cout << "OP_POP" << std::endl;
+                return offset + 1;
+            case OP_DEFINE_GLOBAL:
+                {
+                    uint8_t constant = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_DEFINE_GLOBAL" << (int)constant << " '";
+                    printValue(constants[constant]);
+                    std::cout << "'" << std::endl;
+                    return offset + 2;
+                }
+            case OP_GET_GLOBAL:
+                {
+                    uint8_t constant = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_GET_GLOBAL" << (int)constant << " '";
+                    printValue(constants[constant]);
+                    std::cout << "'" << std::endl;
+                    return offset + 2;
+                }
+            case OP_SET_GLOBAL:
+                {
+                    uint8_t constant = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_SET_GLOBAL" << (int)constant << " '";
+                    printValue(constants[constant]);
+                    std::cout << "'" << std::endl;
+                    return offset + 2;
+                }
+            case OP_CALL:
+                {
+                    uint8_t argCount = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_CALL" << (int)argCount << std::endl;
+                    return offset + 2;
+                }
+            case OP_PRINT:
+                std::cout << "OP_PRINT" << std::endl;
+                return offset + 1;
             default:
                 std::cout << "Unknown opcode " << (int)instruction << std::endl;
                 return offset + 1;

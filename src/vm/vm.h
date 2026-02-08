@@ -4,6 +4,7 @@
 #include "common.h"
 #include "chunk.h"
 #include "value.h"
+#include "table.h"
 #include "../include/cxxx.h" // For InterpretResult
 
 namespace cxxx {
@@ -25,6 +26,9 @@ namespace cxxx {
         Value pop();
         Value peek(int distance);
         bool stackEmpty();
+
+        Table globals;
+        Table strings;
 
     private:
         Chunk* chunk;

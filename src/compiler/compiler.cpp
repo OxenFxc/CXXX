@@ -1,5 +1,6 @@
 #include "compiler.h"
 #include "scanner.h"
+#include "../vm/object.h"
 #include <iostream>
 #include <cstdlib>
 #include <vector>
@@ -29,7 +30,7 @@ namespace cxxx {
 
     struct CompilerInstance;
 
-    typedef void (*ParseFn)(CompilerInstance*);
+    typedef void (*ParseFn)(CompilerInstance*, bool canAssign);
 
     struct ParseRule {
         ParseFn prefix;
@@ -38,9 +39,10 @@ namespace cxxx {
     };
 
     struct CompilerInstance {
-        Parser parser;
         Scanner* scanner;
         Chunk* compilingChunk;
+        Table* internTable;
+        Parser parser;
     };
 
     ParseRule* getRule(TokenType type);
@@ -95,6 +97,12 @@ namespace cxxx {
         errorAtCurrent(compiler, message);
     }
 
+    bool match(CompilerInstance* compiler, TokenType type) {
+        if (compiler->parser.current.type != type) return false;
+        advance(compiler);
+        return true;
+    }
+
     void emitByte(CompilerInstance* compiler, uint8_t byte) {
         currentChunk(compiler)->write(byte, compiler->parser.previous.line);
     }
@@ -108,15 +116,65 @@ namespace cxxx {
         emitByte(compiler, OP_RETURN);
     }
 
+    uint8_t makeConstant(CompilerInstance* compiler, Value value) {
+        int constant = currentChunk(compiler)->addConstant(value);
+        if (constant > 255) {
+            error(compiler, "Too many constants in one chunk.");
+            return 0;
+        }
+        return (uint8_t)constant;
+    }
+
     void emitConstant(CompilerInstance* compiler, Value value) {
-        emitBytes(compiler, OP_CONSTANT, (uint8_t)currentChunk(compiler)->addConstant(value));
+        emitBytes(compiler, OP_CONSTANT, makeConstant(compiler, value));
+    }
+
+    uint8_t identifierConstant(CompilerInstance* compiler, Token* name, Table* internTable) {
+        ObjString* string = copyString(name->start, name->length, internTable);
+        return makeConstant(compiler, OBJ_VAL((Obj*)string));
     }
 
     // Forward declarations
     void expression(CompilerInstance* compiler);
     void parsePrecedence(CompilerInstance* compiler, Precedence precedence);
+    void variable(CompilerInstance* compiler, bool canAssign);
 
-    void binary(CompilerInstance* compiler) {
+    uint8_t argumentList(CompilerInstance* compiler) {
+        uint8_t argCount = 0;
+        if (!match(compiler, TOKEN_RIGHT_PAREN)) {
+            do {
+                expression(compiler);
+                if (argCount == 255) {
+                    error(compiler, "Can't have more than 255 arguments.");
+                }
+                argCount++;
+            } while (match(compiler, TOKEN_COMMA));
+            consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+        }
+        return argCount;
+    }
+
+    void call(CompilerInstance* compiler, bool canAssign) {
+        uint8_t argCount = argumentList(compiler);
+        emitBytes(compiler, OP_CALL, argCount);
+    }
+
+    void namedVariable(CompilerInstance* compiler, Token name, bool canAssign) {
+        uint8_t arg = identifierConstant(compiler, &name, compiler->internTable);
+
+        if (canAssign && match(compiler, TOKEN_EQUAL)) {
+            expression(compiler);
+            emitBytes(compiler, OP_SET_GLOBAL, arg);
+        } else {
+            emitBytes(compiler, OP_GET_GLOBAL, arg);
+        }
+    }
+
+    void variable(CompilerInstance* compiler, bool canAssign) {
+        namedVariable(compiler, compiler->parser.previous, canAssign);
+    }
+
+    void binary(CompilerInstance* compiler, bool canAssign) {
         TokenType operatorType = compiler->parser.previous.type;
         ParseRule* rule = getRule(operatorType);
         parsePrecedence(compiler, (Precedence)(rule->precedence + 1));
@@ -130,21 +188,18 @@ namespace cxxx {
         }
     }
 
-    void grouping(CompilerInstance* compiler) {
+    void grouping(CompilerInstance* compiler, bool canAssign) {
         expression(compiler);
         consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
 
-    void number(CompilerInstance* compiler) {
-        // null-terminate the token string to use strtod, or use from_chars (C++17)
-        // Since `start` is in a big buffer, we can't null terminate easily.
-        // We'll create a temp string.
+    void number(CompilerInstance* compiler, bool canAssign) {
         std::string s(compiler->parser.previous.start, compiler->parser.previous.length);
         double value = std::stod(s);
         emitConstant(compiler, NUMBER_VAL(value));
     }
 
-    void unary(CompilerInstance* compiler) {
+    void unary(CompilerInstance* compiler, bool canAssign) {
         TokenType operatorType = compiler->parser.previous.type;
 
         // Compile the operand.
@@ -157,8 +212,11 @@ namespace cxxx {
         }
     }
 
+    // Forward declare call
+    void call(CompilerInstance* compiler, bool canAssign);
+
     ParseRule rules[] = {
-        {grouping, NULL,   PREC_NONE},       // TOKEN_LEFT_PAREN
+        {grouping, call,   PREC_CALL},       // TOKEN_LEFT_PAREN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RIGHT_PAREN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_LEFT_BRACE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RIGHT_BRACE
@@ -177,7 +235,7 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_GREATER_EQUAL
         {NULL,     NULL,   PREC_NONE},       // TOKEN_LESS
         {NULL,     NULL,   PREC_NONE},       // TOKEN_LESS_EQUAL
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_IDENTIFIER
+        {variable, NULL,   PREC_NONE},       // TOKEN_IDENTIFIER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_STRING
         {number,   NULL,   PREC_NONE},       // TOKEN_NUMBER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_AND
@@ -212,12 +270,17 @@ namespace cxxx {
             return;
         }
 
-        prefixRule(compiler);
+        bool canAssign = precedence <= PREC_ASSIGNMENT;
+        prefixRule(compiler, canAssign);
 
         while (precedence <= getRule(compiler->parser.current.type)->precedence) {
             advance(compiler);
             ParseFn infixRule = getRule(compiler->parser.previous.type)->infix;
-            infixRule(compiler);
+            infixRule(compiler, canAssign);
+        }
+
+        if (canAssign && match(compiler, TOKEN_EQUAL)) {
+             error(compiler, "Invalid assignment target.");
         }
     }
 
@@ -225,17 +288,92 @@ namespace cxxx {
         parsePrecedence(compiler, PREC_ASSIGNMENT);
     }
 
-    bool compile(const std::string& source, Chunk* chunk) {
+    uint8_t parseVariable(CompilerInstance* compiler, const char* errorMessage) {
+        consume(compiler, TOKEN_IDENTIFIER, errorMessage);
+        return identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+    }
+
+    void defineVariable(CompilerInstance* compiler, uint8_t global) {
+        emitBytes(compiler, OP_DEFINE_GLOBAL, global);
+    }
+
+    void varDeclaration(CompilerInstance* compiler) {
+        uint8_t global = parseVariable(compiler, "Expect variable name.");
+
+        if (match(compiler, TOKEN_EQUAL)) {
+            expression(compiler);
+        } else {
+            emitConstant(compiler, NIL_VAL());
+        }
+        consume(compiler, TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+
+        defineVariable(compiler, global);
+    }
+
+    void expressionStatement(CompilerInstance* compiler) {
+        expression(compiler);
+        consume(compiler, TOKEN_SEMICOLON, "Expect ';' after expression.");
+        emitByte(compiler, OP_POP);
+    }
+
+    void printStatement(CompilerInstance* compiler) {
+        expression(compiler);
+        consume(compiler, TOKEN_SEMICOLON, "Expect ';' after value.");
+        emitByte(compiler, OP_PRINT);
+    }
+
+    void statement(CompilerInstance* compiler) {
+        if (match(compiler, TOKEN_PRINT)) {
+            printStatement(compiler);
+        } else {
+            expressionStatement(compiler);
+        }
+    }
+
+    void declaration(CompilerInstance* compiler) {
+        if (match(compiler, TOKEN_VAR)) {
+            varDeclaration(compiler);
+        } else {
+            statement(compiler);
+        }
+
+        if (compiler->parser.panicMode) {
+             // synchronize
+             compiler->parser.panicMode = false;
+             while (compiler->parser.current.type != TOKEN_EOF) {
+                 if (compiler->parser.previous.type == TOKEN_SEMICOLON) return;
+                 switch (compiler->parser.current.type) {
+                     case TOKEN_CLASS:
+                     case TOKEN_FUN:
+                     case TOKEN_VAR:
+                     case TOKEN_FOR:
+                     case TOKEN_IF:
+                     case TOKEN_WHILE:
+                     case TOKEN_PRINT:
+                     case TOKEN_RETURN:
+                         return;
+                     default:
+                         ; // Do nothing.
+                 }
+                 advance(compiler);
+             }
+        }
+    }
+
+    bool compile(const std::string& source, Chunk* chunk, Table* internTable) {
         Scanner scanner(source.c_str());
         CompilerInstance compiler;
         compiler.scanner = &scanner;
         compiler.compilingChunk = chunk;
+        compiler.internTable = internTable;
         compiler.parser.hadError = false;
         compiler.parser.panicMode = false;
 
         advance(&compiler);
-        expression(&compiler);
-        consume(&compiler, TOKEN_EOF, "Expect end of expression.");
+
+        while (!match(&compiler, TOKEN_EOF)) {
+            declaration(&compiler);
+        }
 
         emitReturn(&compiler);
 

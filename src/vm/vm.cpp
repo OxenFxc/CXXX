@@ -3,7 +3,7 @@
 
 namespace cxxx {
 
-    VM::VM() {
+    VM::VM() : globals(), strings() {
         resetStack();
         chunk = nullptr;
         ip = nullptr;
@@ -65,6 +65,7 @@ namespace cxxx {
 
         #define READ_BYTE() (*ip++)
         #define READ_CONSTANT() (chunk->constants[READ_BYTE()])
+        #define READ_STRING() ((ObjString*)READ_CONSTANT().as.obj)
 
         for (;;) {
             #ifdef DEBUG_TRACE_EXECUTION
@@ -107,6 +108,55 @@ namespace cxxx {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
                     push(NUMBER_VAL(a / b));
+                    break;
+                }
+                case OP_POP: {
+                    pop();
+                    break;
+                }
+                case OP_DEFINE_GLOBAL: {
+                    ObjString* name = READ_STRING();
+                    std::cout << "VM: Defining global " << name->str << std::endl;
+                    globals.set(name, peek(0));
+                    pop();
+                    break;
+                }
+                case OP_GET_GLOBAL: {
+                    ObjString* name = READ_STRING();
+                    Value value;
+                    if (!globals.get(name, &value)) {
+                        // runtime error
+                        std::cerr << "Undefined variable '" << name->str << "'." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    push(value);
+                    break;
+                }
+                case OP_SET_GLOBAL: {
+                    ObjString* name = READ_STRING();
+                    if (globals.set(name, peek(0))) {
+                        globals.deleteEntry(name);
+                        std::cerr << "Undefined variable '" << name->str << "'." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    break;
+                }
+                case OP_CALL: {
+                    int argCount = READ_BYTE();
+                    Value callee = peek(argCount);
+                    if (!isObjType(callee, OBJ_NATIVE)) {
+                        std::cerr << "Can only call native functions." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    NativeFn native = ((ObjNative*)callee.as.obj)->function;
+                    Value result = native(argCount, stackTop - argCount);
+                    stackTop -= argCount + 1; // Pop args and callee
+                    push(result);
+                    break;
+                }
+                case OP_PRINT: {
+                    printValue(pop());
+                    std::cout << std::endl;
                     break;
                 }
                 case OP_NEGATE: {

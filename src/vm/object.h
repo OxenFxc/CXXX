@@ -11,7 +11,10 @@ namespace cxxx {
     enum ObjType {
         OBJ_STRING,
         OBJ_NATIVE,
-        OBJ_FUNCTION
+        OBJ_FUNCTION,
+        OBJ_CLASS,
+        OBJ_INSTANCE,
+        OBJ_BOUND_METHOD
     };
 
     struct Obj; // Forward declare
@@ -36,12 +39,29 @@ namespace cxxx {
         ObjString* name;
     };
 
+    // Forward declare Table
+    class Table;
+
+    struct ObjClass : public Obj {
+        ObjString* name;
+        Table* methods;
+        // Optional superclass, can be null
+        struct ObjClass* superclass;
+    };
+
+    struct ObjInstance : public Obj {
+        ObjClass* klass;
+        Table* fields;
+    };
+
+    struct ObjBoundMethod : public Obj {
+        Value receiver;
+        ObjFunction* method;
+    };
+
     inline bool isObjType(Value value, ObjType type) {
         return value.isObj() && value.as.obj->type == type;
     }
-
-    // Forward declare Table
-    class Table;
 
     // Helper functions
     ObjString* allocateString(const std::string& str);
@@ -51,6 +71,9 @@ namespace cxxx {
 
     ObjNative* allocateNative(NativeFn function);
     ObjFunction* allocateFunction();
+    ObjClass* allocateClass(ObjString* name);
+    ObjInstance* allocateInstance(ObjClass* klass);
+    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjFunction* method);
 
     void printObject(Value value);
 

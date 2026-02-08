@@ -48,6 +48,11 @@ namespace cxxx {
         InterpretResult run();
 
         void resetStack();
+        void defineMethod(ObjString* name);
+        bool bindMethod(ObjClass* klass, ObjString* name);
+        bool callValue(Value callee, int argCount);
+        bool invoke(ObjString* name, int argCount);
+        bool invokeFromClass(ObjClass* klass, ObjString* name, int argCount);
     };
 
 }

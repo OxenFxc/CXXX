@@ -149,16 +149,6 @@ namespace cxxx {
                     }
                     break;
                 }
-                case OP_GET_LOCAL: {
-                    uint8_t slot = READ_BYTE();
-                    push(frame->slots[slot]);
-                    break;
-                }
-                case OP_SET_LOCAL: {
-                    uint8_t slot = READ_BYTE();
-                    frame->slots[slot] = peek(0);
-                    break;
-                }
                 case OP_LOOP: {
                     uint16_t offset = (uint16_t)(READ_BYTE() << 8);
                     offset |= READ_BYTE();
@@ -169,22 +159,30 @@ namespace cxxx {
                     pop();
                     break;
                 }
-                case OP_DEFINE_GLOBAL: {
-                    ObjString* name = READ_STRING();
-                    // std::cout << "VM: Defining global " << name->str << std::endl;
-                    globals.set(name, peek(0));
-                    pop();
+                case OP_GET_LOCAL: {
+                    uint8_t slot = READ_BYTE();
+                    push(frame->slots[slot]);
+                    break;
+                }
+                case OP_SET_LOCAL: {
+                    uint8_t slot = READ_BYTE();
+                    frame->slots[slot] = peek(0);
                     break;
                 }
                 case OP_GET_GLOBAL: {
                     ObjString* name = READ_STRING();
                     Value value;
                     if (!globals.get(name, &value)) {
-                        // runtime error
                         std::cerr << "Undefined variable '" << name->str << "'." << std::endl;
                         return InterpretResult::RUNTIME_ERROR;
                     }
                     push(value);
+                    break;
+                }
+                case OP_DEFINE_GLOBAL: {
+                    ObjString* name = READ_STRING();
+                    globals.set(name, peek(0));
+                    pop();
                     break;
                 }
                 case OP_SET_GLOBAL: {
@@ -196,35 +194,91 @@ namespace cxxx {
                     }
                     break;
                 }
+                case OP_CLASS: {
+                    push(OBJ_VAL((Obj*)allocateClass(READ_STRING())));
+                    break;
+                }
+                case OP_METHOD: {
+                    defineMethod(READ_STRING());
+                    break;
+                }
+                case OP_GET_PROPERTY: {
+                    if (!isObjType(peek(0), OBJ_INSTANCE)) {
+                        std::cerr << "Only instances have properties." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    ObjInstance* instance = (ObjInstance*)peek(0).as.obj;
+                    ObjString* name = READ_STRING();
+
+                    Value value;
+                    if (instance->fields->get(name, &value)) {
+                        pop(); // Instance.
+                        push(value);
+                        break;
+                    }
+
+                    if (!bindMethod(instance->klass, name)) {
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    break;
+                }
+                case OP_SET_PROPERTY: {
+                    if (!isObjType(peek(1), OBJ_INSTANCE)) {
+                        std::cerr << "Only instances have fields." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    ObjInstance* instance = (ObjInstance*)peek(1).as.obj;
+                    instance->fields->set(READ_STRING(), peek(0));
+                    Value value = pop();
+                    pop();
+                    push(value);
+                    break;
+                }
+                case OP_INVOKE: {
+                    ObjString* method = READ_STRING();
+                    int argCount = READ_BYTE();
+                    if (!invoke(method, argCount)) {
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    frame = &frames[frameCount - 1];
+                    break;
+                }
+                case OP_INHERIT: {
+                    Value superclass = peek(1);
+                    if (!isObjType(superclass, OBJ_CLASS)) {
+                        std::cerr << "Superclass must be a class." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    ObjClass* subclass = (ObjClass*)peek(0).as.obj;
+                    subclass->superclass = (ObjClass*)superclass.as.obj; // Set superclass
+                    pop(); // Subclass.
+                    break;
+                }
+                case OP_GET_SUPER: {
+                    ObjString* name = READ_STRING();
+                    ObjClass* superclass = (ObjClass*)pop().as.obj;
+                    if (!bindMethod(superclass, name)) {
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    break;
+                }
+                case OP_SUPER_INVOKE: {
+                    ObjString* method = READ_STRING();
+                    int argCount = READ_BYTE();
+                    ObjClass* superclass = (ObjClass*)pop().as.obj;
+                    if (!invokeFromClass(superclass, method, argCount)) {
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    frame = &frames[frameCount - 1];
+                    break;
+                }
                 case OP_CALL: {
                     int argCount = READ_BYTE();
-                    Value callee = peek(argCount);
-                    if (isObjType(callee, OBJ_FUNCTION)) {
-                        ObjFunction* function = (ObjFunction*)callee.as.obj;
-                        if (argCount != function->arity) {
-                            std::cerr << "Expected " << function->arity << " arguments but got " << argCount << "." << std::endl;
-                            return InterpretResult::RUNTIME_ERROR;
-                        }
-                        if (frameCount == FRAMES_MAX) {
-                            std::cerr << "Stack overflow." << std::endl;
-                            return InterpretResult::RUNTIME_ERROR;
-                        }
-                        CallFrame* newFrame = &frames[frameCount++];
-                        newFrame->function = function;
-                        newFrame->ip = function->chunk.code.data();
-                        newFrame->slots = stackTop - argCount - 1;
-                        frame = newFrame; // Switch to new frame
-                        break;
+                    if (!callValue(peek(argCount), argCount)) {
+                        return InterpretResult::RUNTIME_ERROR;
                     }
-                    if (isObjType(callee, OBJ_NATIVE)) {
-                        NativeFn native = ((ObjNative*)callee.as.obj)->function;
-                        Value result = native(argCount, stackTop - argCount);
-                        stackTop -= argCount + 1; // Pop args and callee
-                        push(result);
-                        break;
-                    }
-                    std::cerr << "Can only call functions and classes." << std::endl;
-                    return InterpretResult::RUNTIME_ERROR;
+                    frame = &frames[frameCount - 1];
+                    break;
                 }
                 case OP_PRINT: {
                     printValue(pop());
@@ -232,8 +286,6 @@ namespace cxxx {
                     break;
                 }
                 case OP_NEGATE: {
-                    // optimization: modify in place
-                    // if (!peek(0).isNumber()) return RUNTIME_ERROR;
                     push(NUMBER_VAL(-pop().asNumber()));
                     break;
                 }
@@ -241,15 +293,14 @@ namespace cxxx {
                     Value result = pop();
                     frameCount--;
                     if (frameCount == 0) {
-                        pop(); // Pop main script function
-                        // Keep result on stack for API/Test access
+                        pop();
                         push(result);
                         return InterpretResult::OK;
                     }
 
-                    stackTop = frame->slots; // Discard locals
+                    stackTop = frame->slots;
                     push(result);
-                    frame = &frames[frameCount - 1]; // Restore caller frame
+                    frame = &frames[frameCount - 1];
                     break;
                 }
                 default:
@@ -260,6 +311,106 @@ namespace cxxx {
         #undef READ_BYTE
         #undef READ_CONSTANT
         #undef READ_STRING
+    }
+
+    void VM::defineMethod(ObjString* name) {
+        Value method = peek(0);
+        ObjClass* klass = (ObjClass*)peek(1).as.obj;
+        klass->methods->set(name, method);
+        pop();
+    }
+
+    bool VM::bindMethod(ObjClass* klass, ObjString* name) {
+        Value method;
+        ObjClass* current = klass;
+        while (current != nullptr) {
+            if (current->methods->get(name, &method)) {
+                ObjBoundMethod* bound = allocateBoundMethod(peek(0), (ObjFunction*)method.as.obj);
+                pop();
+                push(OBJ_VAL((Obj*)bound));
+                return true;
+            }
+            current = current->superclass;
+        }
+
+        std::cerr << "Undefined property '" << name->str << "'." << std::endl;
+        return false;
+    }
+
+    bool VM::callValue(Value callee, int argCount) {
+        if (isObjType(callee, OBJ_BOUND_METHOD)) {
+            ObjBoundMethod* bound = (ObjBoundMethod*)callee.as.obj;
+            stackTop[-argCount - 1] = bound->receiver;
+            return callValue(OBJ_VAL((Obj*)bound->method), argCount);
+        }
+        else if (isObjType(callee, OBJ_CLASS)) {
+            ObjClass* klass = (ObjClass*)callee.as.obj;
+            stackTop[-argCount - 1] = OBJ_VAL(allocateInstance(klass));
+            Value initializer;
+            if (klass->methods->get(copyString("init", 4, &strings), &initializer)) {
+                return callValue(initializer, argCount);
+            } else if (argCount != 0) {
+                std::cerr << "Expected 0 arguments but got " << argCount << "." << std::endl;
+                return false;
+            }
+            return true;
+        }
+        else if (isObjType(callee, OBJ_FUNCTION)) {
+            ObjFunction* function = (ObjFunction*)callee.as.obj;
+            if (argCount != function->arity) {
+                std::cerr << "Expected " << function->arity << " arguments but got " << argCount << "." << std::endl;
+                return false;
+            }
+            if (frameCount == FRAMES_MAX) {
+                std::cerr << "Stack overflow." << std::endl;
+                return false;
+            }
+            CallFrame* newFrame = &frames[frameCount++];
+            newFrame->function = function;
+            newFrame->ip = function->chunk.code.data();
+            newFrame->slots = stackTop - argCount - 1;
+            return true;
+        }
+        else if (isObjType(callee, OBJ_NATIVE)) {
+            NativeFn native = ((ObjNative*)callee.as.obj)->function;
+            Value result = native(argCount, stackTop - argCount);
+            stackTop -= argCount + 1;
+            push(result);
+            return true;
+        }
+        std::cerr << "Can only call functions and classes." << std::endl;
+        return false;
+    }
+
+    bool VM::invoke(ObjString* name, int argCount) {
+        Value receiver = peek(argCount);
+        if (!isObjType(receiver, OBJ_INSTANCE)) {
+             std::cerr << "Only instances have methods." << std::endl;
+             return false;
+        }
+        ObjInstance* instance = (ObjInstance*)receiver.as.obj;
+
+        Value value;
+        if (instance->fields->get(name, &value)) {
+            stackTop[-argCount - 1] = value;
+            return callValue(value, argCount);
+        }
+
+        return invokeFromClass(instance->klass, name, argCount);
+    }
+
+    bool VM::invokeFromClass(ObjClass* klass, ObjString* name, int argCount) {
+        Value method;
+        ObjClass* current = klass;
+        while (current != nullptr) {
+            if (current->methods->get(name, &method)) {
+                return callValue(method, argCount);
+            }
+            current = current->superclass;
+        }
+
+        std::cerr << "Undefined property '" << name->str << "'." << std::endl;
+        return false;
     }
 
 }

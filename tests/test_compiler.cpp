@@ -28,14 +28,17 @@ int main() {
 
     // So we MUST use a string table shared with VM.
 
+    // std::cout << "Hello test_compiler" << std::endl;
+
     VM vm;
     vm.init();
 
     std::cout << "vm address: " << &vm << std::endl;
     std::cout << "vm.strings address: " << &vm.strings << std::endl;
     std::cout << "vm.globals address: " << &vm.globals << std::endl;
+    std::cout << "Calling compile..." << std::endl;
 
-    ObjFunction* function = compile(source, &vm.strings);
+    ObjFunction* function = compile(source, &vm.strings); // &vm.strings
     if (function != nullptr) {
         std::cout << "Compilation successful." << std::endl;
         function->chunk.disassemble("Compiled Chunk");

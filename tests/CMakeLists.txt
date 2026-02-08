@@ -17,6 +17,7 @@ set(TEST_SOURCES
     test_completion_oop.cpp
     test_nested.cpp
     test_for_scope.cpp
+    test_turing.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

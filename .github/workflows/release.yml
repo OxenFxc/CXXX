@@ -5,66 +5,121 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target Platform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+        - all
+        - linux
+        - windows
+        - android
 
 jobs:
-  build-and-release:
+  build:
+    name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux, windows, android]
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Check if job should run
+      id: check_run
+      run: |
+        INPUT_TARGET="${{ github.event.inputs.target }}"
+        CURRENT_TARGET="${{ matrix.target }}"
+        if [ -n "$INPUT_TARGET" ] && [ "$INPUT_TARGET" != "all" ] && [ "$INPUT_TARGET" != "$CURRENT_TARGET" ]; then
+          echo "Skipping $CURRENT_TARGET as target is $INPUT_TARGET"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "Running for $CURRENT_TARGET"
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Install dependencies
+      if: steps.check_run.outputs.skip != 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake g++ ccache
-
-    - name: Cache ccache
-      uses: actions/cache@v3
-      with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-ccache-
+        sudo apt-get install -y cmake g++ mingw-w64 zip
 
     - name: Setup ccache
-      run: |
-        ccache --max-size=500M
-        ccache --set-config=compression=true
+      if: steps.check_run.outputs.skip != 'true'
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ matrix.target }}-${{ github.sha }}
+        restore-keys: |
+          ${{ matrix.target }}-
 
-    - name: Configure CMake
+    - name: Configure CMake (Linux)
+      if: matrix.target == 'linux' && steps.check_run.outputs.skip != 'true'
       run: |
         cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
+    - name: Configure CMake (Windows)
+      if: matrix.target == 'windows' && steps.check_run.outputs.skip != 'true'
+      run: |
+        cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+    - name: Configure CMake (Android)
+      if: matrix.target == 'android' && steps.check_run.outputs.skip != 'true'
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-21 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
     - name: Build
+      if: steps.check_run.outputs.skip != 'true'
       run: |
         cmake --build build --config Release
 
-    - name: Test
+    - name: Test (Linux only)
+      if: matrix.target == 'linux' && steps.check_run.outputs.skip != 'true'
       run: |
         cd build
         ctest --output-on-failure
 
     - name: Package Release
+      if: steps.check_run.outputs.skip != 'true'
       run: |
-        tar -czvf cxxx-linux-amd64.tar.gz -C build cxxx
+        mkdir -p artifacts
+        if [ "${{ matrix.target }}" == "linux" ]; then
+          tar -czvf artifacts/cxxx-linux-amd64.tar.gz -C build cxxx
+        elif [ "${{ matrix.target }}" == "windows" ]; then
+          zip -j artifacts/cxxx-windows-amd64.zip build/cxxx.exe
+        elif [ "${{ matrix.target }}" == "android" ]; then
+          tar -czvf artifacts/cxxx-android-arm64.tar.gz -C build cxxx
+        fi
 
     - name: Upload Artifact
+      if: steps.check_run.outputs.skip != 'true'
       uses: actions/upload-artifact@v3
       with:
-        name: cxxx-linux-amd64
-        path: cxxx-linux-amd64.tar.gz
+        name: cxxx-${{ matrix.target }}
+        path: artifacts/*
 
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
-      with:
-        files: cxxx-linux-amd64.tar.gz
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: release_artifacts
 
-    - name: Clean up build artifacts
-      if: always()
-      run: |
-        echo "Cleaning up compiled content..."
-        rm -rf build
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release_artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

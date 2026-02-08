@@ -4,14 +4,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "../include/cxxx.h"
 
 namespace cxxx {
-    // Forward declare Value
-    struct Value;
-
-    // Native function pointer type
-    // Takes arg count and arg array. returns Value.
-    typedef Value (*NativeFn)(int argCount, Value* args);
+    // Value and NativeFn are now defined in cxxx.h
 }
 
 #endif

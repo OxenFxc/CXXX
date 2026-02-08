@@ -6,60 +6,21 @@
 
 namespace cxxx {
 
-    enum ValueType {
-        VAL_BOOL,
-        VAL_NIL,
-        VAL_NUMBER,
-        VAL_OBJ
-    };
-
-    // Forward declaration for Object
-    struct Obj;
-
-    struct Value {
-        ValueType type;
-        union {
-            bool boolean;
-            double number;
-            Obj* obj;
-        } as;
-
-        bool isBool() const { return type == VAL_BOOL; }
-        bool isNil() const { return type == VAL_NIL; }
-        bool isNumber() const { return type == VAL_NUMBER; }
-        bool isObj() const { return type == VAL_OBJ; }
-
-        double asNumber() const { return as.number; }
-        bool asBool() const { return as.boolean; }
-    };
-
-    // Helper functions for constructing Values
+    // Helper functions for constructing Values (internal usage)
     inline Value BOOL_VAL(bool value) {
-        Value v;
-        v.type = VAL_BOOL;
-        v.as.boolean = value;
-        return v;
+        return Value::boolean(value);
     }
 
     inline Value NIL_VAL() {
-        Value v;
-        v.type = VAL_NIL;
-        v.as.number = 0;
-        return v;
+        return Value::nil();
     }
 
     inline Value NUMBER_VAL(double value) {
-        Value v;
-        v.type = VAL_NUMBER;
-        v.as.number = value;
-        return v;
+        return Value::number(value);
     }
 
     inline Value OBJ_VAL(Obj* object) {
-        Value v;
-        v.type = VAL_OBJ;
-        v.as.obj = object;
-        return v;
+        return Value::object(object);
     }
 
     // Helper methods

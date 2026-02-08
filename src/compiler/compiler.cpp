@@ -58,6 +58,14 @@ namespace cxxx {
         TYPE_INITIALIZER
     };
 
+    struct Loop {
+        Loop* enclosing;
+        int start;
+        int scopeDepth;
+        bool isLoop;
+        std::vector<int> breakJumps;
+    };
+
     struct Compiler {
         struct Compiler* enclosing;
         ObjFunction* function;
@@ -68,6 +76,7 @@ namespace cxxx {
         Upvalue upvalues[256];
         int upvalueCount;
         int scopeDepth;
+        Loop* loop;
     };
 
     struct ClassCompiler {
@@ -564,7 +573,11 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_STRING
         {number,   NULL,   PREC_NONE},       // TOKEN_NUMBER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_AND
+        {NULL,     NULL,   PREC_NONE},       // TOKEN_BREAK
+        {NULL,     NULL,   PREC_NONE},       // TOKEN_CASE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_CLASS
+        {NULL,     NULL,   PREC_NONE},       // TOKEN_CONTINUE
+        {NULL,     NULL,   PREC_NONE},       // TOKEN_DEFAULT
         {NULL,     NULL,   PREC_NONE},       // TOKEN_ELSE
         {literal,  NULL,   PREC_NONE},       // TOKEN_FALSE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_FOR
@@ -576,6 +589,7 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_PRINT
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RETURN
         {super_,   NULL,   PREC_NONE},       // TOKEN_SUPER
+        {NULL,     NULL,   PREC_NONE},       // TOKEN_SWITCH
         {this_,    NULL,   PREC_NONE},       // TOKEN_THIS
         {literal,  NULL,   PREC_NONE},       // TOKEN_TRUE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_VAR
@@ -718,8 +732,141 @@ namespace cxxx {
 
     void statement(CompilerInstance* compiler); // Forward declaration
 
+    void beginLoop(CompilerInstance* compiler, Loop* loop) {
+        loop->enclosing = compiler->compiler->loop;
+        loop->start = 0;
+        loop->scopeDepth = compiler->compiler->scopeDepth;
+        loop->isLoop = true;
+        compiler->compiler->loop = loop;
+    }
+
+    void endLoop(CompilerInstance* compiler) {
+        if (compiler->compiler->loop == nullptr) return;
+
+        for (int jump : compiler->compiler->loop->breakJumps) {
+            patchJump(compiler, jump);
+        }
+
+        compiler->compiler->loop = compiler->compiler->loop->enclosing;
+    }
+
+    void breakStatement(CompilerInstance* compiler) {
+        if (compiler->compiler->loop == nullptr) {
+            error(compiler, "Can't use 'break' outside of a loop or switch.");
+        }
+        consume(compiler, TOKEN_SEMICOLON, "Expect ';' after 'break'.");
+
+        if (compiler->compiler->loop == nullptr) return;
+
+        for (int i = compiler->compiler->localCount - 1;
+             i >= 0 && compiler->compiler->locals[i].depth > compiler->compiler->loop->scopeDepth;
+             i--) {
+             if (compiler->compiler->locals[i].isCaptured) {
+                 emitByte(compiler, OP_CLOSE_UPVALUE);
+             } else {
+                 emitByte(compiler, OP_POP);
+             }
+        }
+
+        compiler->compiler->loop->breakJumps.push_back(emitJump(compiler, OP_JUMP));
+    }
+
+    void continueStatement(CompilerInstance* compiler) {
+        Loop* loop = compiler->compiler->loop;
+        while (loop != nullptr && !loop->isLoop) {
+            loop = loop->enclosing;
+        }
+
+        if (loop == nullptr) {
+            error(compiler, "Can't use 'continue' outside of a loop.");
+        }
+        consume(compiler, TOKEN_SEMICOLON, "Expect ';' after 'continue'.");
+
+        for (int i = compiler->compiler->localCount - 1;
+             i >= 0 && compiler->compiler->locals[i].depth > loop->scopeDepth;
+             i--) {
+             if (compiler->compiler->locals[i].isCaptured) {
+                 emitByte(compiler, OP_CLOSE_UPVALUE);
+             } else {
+                 emitByte(compiler, OP_POP);
+             }
+        }
+
+        emitLoop(compiler, loop->start);
+    }
+
+    void switchStatement(CompilerInstance* compiler) {
+        consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'switch'.");
+
+        beginScope(compiler);
+        expression(compiler);
+        addLocal(compiler, syntheticToken(" switch_temp "));
+        markInitialized(compiler);
+
+        consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after switch value.");
+        consume(compiler, TOKEN_LEFT_BRACE, "Expect '{' before switch cases.");
+
+        Loop switchLoop;
+        beginLoop(compiler, &switchLoop);
+        switchLoop.isLoop = false;
+        switchLoop.start = -1;
+
+        int previousCaseSkip = -1;
+
+        while (!check(compiler, TOKEN_RIGHT_BRACE) && !check(compiler, TOKEN_EOF)) {
+            if (match(compiler, TOKEN_CASE) || match(compiler, TOKEN_DEFAULT)) {
+                TokenType type = compiler->parser.previous.type;
+
+                if (previousCaseSkip != -1) {
+                    // Implicit break from previous case
+                    int jumpToEnd = emitJump(compiler, OP_JUMP);
+                    switchLoop.breakJumps.push_back(jumpToEnd);
+
+                    patchJump(compiler, previousCaseSkip);
+                    emitByte(compiler, OP_POP); // Pop boolean result of previous condition (wait, NO)
+                    // Wait, previousCaseSkip jumps over BODY.
+                    // The stack before jump is [bool] (result of equal).
+                    // So at previousCaseSkip target, stack has [bool].
+                    // So we must pop it.
+                }
+
+                if (type == TOKEN_CASE) {
+                    emitBytes(compiler, OP_GET_LOCAL, (uint8_t)(compiler->compiler->localCount - 1));
+                    expression(compiler);
+                    consume(compiler, TOKEN_COLON, "Expect ':' after case value.");
+                    emitByte(compiler, OP_EQUAL);
+                    previousCaseSkip = emitJump(compiler, OP_JUMP_IF_FALSE);
+                    emitByte(compiler, OP_POP); // Pop true result
+                } else {
+                    consume(compiler, TOKEN_COLON, "Expect ':' after default.");
+                    previousCaseSkip = -1;
+                }
+            } else {
+                if (previousCaseSkip != -1) {
+                    // error(compiler, "Statements must follow a case or default.");
+                    // Actually, statements are fine.
+                }
+                statement(compiler);
+            }
+        }
+
+        if (previousCaseSkip != -1) {
+             patchJump(compiler, previousCaseSkip);
+             emitByte(compiler, OP_POP); // Pop boolean result
+        }
+
+        consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after switch cases.");
+        endLoop(compiler);
+        endScope(compiler);
+    }
+
     void whileStatement(CompilerInstance* compiler) {
         int loopStart = currentChunk(compiler)->code.size();
+
+        Loop loop;
+        beginLoop(compiler, &loop);
+        loop.start = loopStart;
+
         consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
         expression(compiler);
         consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
@@ -731,6 +878,8 @@ namespace cxxx {
 
         patchJump(compiler, exitJump);
         emitByte(compiler, OP_POP);
+
+        endLoop(compiler);
     }
 
     void forStatement(CompilerInstance* compiler) {
@@ -744,6 +893,11 @@ namespace cxxx {
         }
 
         int loopStart = currentChunk(compiler)->code.size();
+
+        Loop loop;
+        beginLoop(compiler, &loop);
+        loop.start = loopStart;
+
         int exitJump = -1;
         if (!match(compiler, TOKEN_SEMICOLON)) {
             expression(compiler);
@@ -763,6 +917,7 @@ namespace cxxx {
 
             emitLoop(compiler, loopStart);
             loopStart = incrementStart;
+            loop.start = loopStart;
             patchJump(compiler, bodyJump);
         }
 
@@ -773,6 +928,8 @@ namespace cxxx {
             patchJump(compiler, exitJump);
             emitByte(compiler, OP_POP); // Condition.
         }
+
+        endLoop(compiler);
     }
 
     void ifStatement(CompilerInstance* compiler) {
@@ -820,6 +977,12 @@ namespace cxxx {
             returnStatement(compiler);
         } else if (match(compiler, TOKEN_WHILE)) {
             whileStatement(compiler);
+        } else if (match(compiler, TOKEN_BREAK)) {
+            breakStatement(compiler);
+        } else if (match(compiler, TOKEN_CONTINUE)) {
+            continueStatement(compiler);
+        } else if (match(compiler, TOKEN_SWITCH)) {
+            switchStatement(compiler);
         } else if (match(compiler, TOKEN_LEFT_BRACE)) {
             beginScope(compiler);
             block(compiler);
@@ -837,6 +1000,7 @@ namespace cxxx {
         compiler.localCount = 0;
         compiler.upvalueCount = 0;
         compiler.scopeDepth = 0;
+        compiler.loop = nullptr;
         compilerInstance->compiler = &compiler;
 
         if (type != TYPE_SCRIPT) {
@@ -996,6 +1160,7 @@ namespace cxxx {
         compiler.localCount = 0;
         compiler.upvalueCount = 0;
         compiler.scopeDepth = 0;
+        compiler.loop = nullptr;
 
         Local* local = &compiler.locals[compiler.localCount++];
         local->depth = 0;

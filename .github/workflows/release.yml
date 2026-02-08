@@ -18,39 +18,39 @@ on:
         - android
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.set-matrix.outputs.targets }}
+    steps:
+      - id: set-matrix
+        run: |
+          TARGET="${{ github.event.inputs.target }}"
+          if [ -z "$TARGET" ] || [ "$TARGET" == "all" ]; then
+            echo 'targets=["linux", "windows", "android"]' >> $GITHUB_OUTPUT
+          else
+            echo "targets=[\"$TARGET\"]" >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: setup
     name: Build ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [linux, windows, android]
+        target: ${{ fromJson(needs.setup.outputs.targets) }}
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Check if job should run
-      id: check_run
-      run: |
-        INPUT_TARGET="${{ github.event.inputs.target }}"
-        CURRENT_TARGET="${{ matrix.target }}"
-        if [ -n "$INPUT_TARGET" ] && [ "$INPUT_TARGET" != "all" ] && [ "$INPUT_TARGET" != "$CURRENT_TARGET" ]; then
-          echo "Skipping $CURRENT_TARGET as target is $INPUT_TARGET"
-          echo "skip=true" >> $GITHUB_OUTPUT
-        else
-          echo "Running for $CURRENT_TARGET"
-          echo "skip=false" >> $GITHUB_OUTPUT
-        fi
+      uses: actions/checkout@v4
 
     - name: Install dependencies
-      if: steps.check_run.outputs.skip != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake g++ mingw-w64 zip
 
     - name: Setup ccache
-      if: steps.check_run.outputs.skip != 'true'
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: ${{ matrix.target }}-${{ github.sha }}
@@ -58,17 +58,17 @@ jobs:
           ${{ matrix.target }}-
 
     - name: Configure CMake (Linux)
-      if: matrix.target == 'linux' && steps.check_run.outputs.skip != 'true'
+      if: matrix.target == 'linux'
       run: |
         cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
     - name: Configure CMake (Windows)
-      if: matrix.target == 'windows' && steps.check_run.outputs.skip != 'true'
+      if: matrix.target == 'windows'
       run: |
         cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-mingw.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
     - name: Configure CMake (Android)
-      if: matrix.target == 'android' && steps.check_run.outputs.skip != 'true'
+      if: matrix.target == 'android'
       run: |
         cmake -S . -B build \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
@@ -78,18 +78,16 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
     - name: Build
-      if: steps.check_run.outputs.skip != 'true'
       run: |
         cmake --build build --config Release
 
     - name: Test (Linux only)
-      if: matrix.target == 'linux' && steps.check_run.outputs.skip != 'true'
+      if: matrix.target == 'linux'
       run: |
         cd build
         ctest --output-on-failure
 
     - name: Package Release
-      if: steps.check_run.outputs.skip != 'true'
       run: |
         mkdir -p artifacts
         if [ "${{ matrix.target }}" == "linux" ]; then
@@ -101,8 +99,7 @@ jobs:
         fi
 
     - name: Upload Artifact
-      if: steps.check_run.outputs.skip != 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: cxxx-${{ matrix.target }}
         path: artifacts/*
@@ -113,12 +110,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: release_artifacts
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: release_artifacts/**/*
         env:

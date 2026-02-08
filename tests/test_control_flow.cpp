@@ -28,6 +28,14 @@ int main() {
     vm.interpret("var f = 0; if (true) f = 1;");
     assert(vm.getGlobalNumber("f") == 1.0);
 
+    // Test while
+    vm.interpret("var i = 0; while (i < 5) { i = i + 1; }");
+    assert(vm.getGlobalNumber("i") == 5.0);
+
+    // Test for
+    vm.interpret("var j = 0; for (j = 0; j < 5; j = j + 1) { }");
+    assert(vm.getGlobalNumber("j") == 5.0);
+
     std::cout << "Control flow tests passed." << std::endl;
     return 0;
 }

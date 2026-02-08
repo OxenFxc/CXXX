@@ -59,6 +59,15 @@ namespace cxxx {
         return native;
     }
 
+    ObjFunction* allocateFunction() {
+        ObjFunction* function = new ObjFunction();
+        function->type = OBJ_FUNCTION;
+        function->next = nullptr;
+        function->arity = 0;
+        function->name = nullptr;
+        return function;
+    }
+
     void printObject(Value value) {
         switch (value.as.obj->type) {
             case OBJ_STRING:
@@ -66,6 +75,13 @@ namespace cxxx {
                 break;
             case OBJ_NATIVE:
                 std::cout << "<native fn>";
+                break;
+            case OBJ_FUNCTION:
+                if (((ObjFunction*)value.as.obj)->name == nullptr) {
+                    std::cout << "<script>";
+                } else {
+                    std::cout << "<fn " << ((ObjFunction*)value.as.obj)->name->str << ">";
+                }
                 break;
         }
     }

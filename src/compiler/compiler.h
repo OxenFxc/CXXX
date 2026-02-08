@@ -3,13 +3,12 @@
 
 #include "../vm/chunk.h"
 #include "../vm/table.h"
+#include "../vm/object.h"
 #include <string>
-
-// #error "INCLUDED CORRECTLY"
 
 namespace cxxx {
 
-    bool compile(const std::string& source, Chunk* chunk, Table* internTable);
+    ObjFunction* compile(const std::string& source, Table* internTable);
 
 }
 

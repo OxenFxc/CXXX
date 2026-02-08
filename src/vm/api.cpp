@@ -23,14 +23,15 @@ namespace cxxx {
     }
 
     InterpretResult CXXX::interpret(const std::string& source) {
-        Chunk chunk;
         VM* v = (VM*)vm;
 
-        if (!compile(source, &chunk, &v->strings)) {
+        ObjFunction* function = compile(source, &v->strings);
+        if (function == nullptr) {
             return InterpretResult::COMPILE_ERROR;
         }
 
-        InterpretResult result = v->interpret(&chunk);
+        v->push(OBJ_VAL((Obj*)function));
+        InterpretResult result = v->interpret(function);
 
         if (result == InterpretResult::OK) {
              if (!v->stackEmpty()) {

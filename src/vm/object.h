@@ -3,14 +3,18 @@
 
 #include "common.h"
 #include "value.h"
+#include "chunk.h"
 #include <string>
 
 namespace cxxx {
 
     enum ObjType {
         OBJ_STRING,
-        OBJ_NATIVE
+        OBJ_NATIVE,
+        OBJ_FUNCTION
     };
+
+    struct Obj; // Forward declare
 
     struct Obj {
         ObjType type;
@@ -24,6 +28,12 @@ namespace cxxx {
 
     struct ObjNative : public Obj {
         NativeFn function;
+    };
+
+    struct ObjFunction : public Obj {
+        int arity;
+        Chunk chunk;
+        ObjString* name;
     };
 
     inline bool isObjType(Value value, ObjType type) {
@@ -40,6 +50,7 @@ namespace cxxx {
     ObjString* takeString(char* chars, int length, Table* internTable = nullptr);
 
     ObjNative* allocateNative(NativeFn function);
+    ObjFunction* allocateFunction();
 
     void printObject(Value value);
 

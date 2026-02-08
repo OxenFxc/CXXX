@@ -160,6 +160,9 @@ namespace cxxx {
             case OP_CLOSE_UPVALUE:
                 std::cout << "OP_CLOSE_UPVALUE" << std::endl;
                 return offset + 1;
+            case OP_INSTANCEOF:
+                std::cout << "OP_INSTANCEOF" << std::endl;
+                return offset + 1;
             default:
                 std::cout << "Unknown opcode " << (int)instruction << std::endl;
                 return offset + 1;

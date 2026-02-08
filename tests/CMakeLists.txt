@@ -11,6 +11,7 @@ set(TEST_SOURCES
     test_control_flow.cpp
     test_sugar.cpp
     test_functions.cpp
+    test_oo.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

@@ -47,7 +47,9 @@ namespace cxxx {
 
     enum FunctionType {
         TYPE_FUNCTION,
-        TYPE_SCRIPT
+        TYPE_SCRIPT,
+        TYPE_METHOD,
+        TYPE_INITIALIZER
     };
 
     struct Compiler {
@@ -60,11 +62,17 @@ namespace cxxx {
         int scopeDepth;
     };
 
+    struct ClassCompiler {
+        struct ClassCompiler* enclosing;
+        bool hasSuperclass;
+    };
+
     struct CompilerInstance {
         Scanner* scanner;
         Table* internTable;
         Parser parser;
         Compiler* compiler;
+        ClassCompiler* currentClass;
     };
 
     ParseRule* getRule(TokenType type);
@@ -147,8 +155,19 @@ namespace cxxx {
         emitBytes(compiler, OP_CONSTANT, makeConstant(compiler, value));
     }
 
+    Token syntheticToken(const char* text) {
+        Token token;
+        token.start = text;
+        token.length = (int)strlen(text);
+        return token;
+    }
+
     void emitReturn(CompilerInstance* compiler) {
-        emitConstant(compiler, NIL_VAL());
+        if (compiler->compiler->type == TYPE_INITIALIZER) {
+            emitBytes(compiler, OP_GET_LOCAL, 0);
+        } else {
+            emitConstant(compiler, NIL_VAL());
+        }
         emitByte(compiler, OP_RETURN);
     }
 
@@ -317,6 +336,53 @@ namespace cxxx {
         namedVariable(compiler, compiler->parser.previous, canAssign);
     }
 
+    void dot(CompilerInstance* compiler, bool canAssign) {
+        consume(compiler, TOKEN_IDENTIFIER, "Expect property name.");
+        uint8_t name = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+
+        if (canAssign && match(compiler, TOKEN_EQUAL)) {
+            expression(compiler);
+            emitBytes(compiler, OP_SET_PROPERTY, name);
+        } else if (match(compiler, TOKEN_LEFT_PAREN)) {
+            uint8_t argCount = argumentList(compiler);
+            emitBytes(compiler, OP_INVOKE, name);
+            emitByte(compiler, argCount);
+        } else {
+            emitBytes(compiler, OP_GET_PROPERTY, name);
+        }
+    }
+
+    void this_(CompilerInstance* compiler, bool canAssign) {
+        if (compiler->currentClass == nullptr) {
+            error(compiler, "Can't use 'this' outside of a class.");
+            return;
+        }
+        variable(compiler, false);
+    }
+
+    void super_(CompilerInstance* compiler, bool canAssign) {
+        if (compiler->currentClass == nullptr) {
+            error(compiler, "Can't use 'super' outside of a class.");
+        } else if (!compiler->currentClass->hasSuperclass) {
+            error(compiler, "Can't use 'super' in a class with no superclass.");
+        }
+
+        consume(compiler, TOKEN_DOT, "Expect '.' after 'super'.");
+        consume(compiler, TOKEN_IDENTIFIER, "Expect superclass method name.");
+        uint8_t name = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+
+        namedVariable(compiler, syntheticToken("this"), false);
+        if (match(compiler, TOKEN_LEFT_PAREN)) {
+            uint8_t argCount = argumentList(compiler);
+            namedVariable(compiler, syntheticToken("super"), false);
+            emitBytes(compiler, OP_SUPER_INVOKE, name);
+            emitByte(compiler, argCount);
+        } else {
+            namedVariable(compiler, syntheticToken("super"), false);
+            emitBytes(compiler, OP_GET_SUPER, name);
+        }
+    }
+
     void binary(CompilerInstance* compiler, bool canAssign) {
         TokenType operatorType = compiler->parser.previous.type;
         ParseRule* rule = getRule(operatorType);
@@ -425,7 +491,7 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_LEFT_BRACE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RIGHT_BRACE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_COMMA
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_DOT
+        {NULL,     dot,    PREC_CALL},       // TOKEN_DOT
         {unary,    binary, PREC_TERM},       // TOKEN_MINUS
         {NULL,     binary, PREC_TERM},       // TOKEN_PLUS
         {NULL,     NULL,   PREC_NONE},       // TOKEN_SEMICOLON
@@ -461,8 +527,8 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_OR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_PRINT
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RETURN
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_SUPER
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_THIS
+        {super_,   NULL,   PREC_NONE},       // TOKEN_SUPER
+        {this_,    NULL,   PREC_NONE},       // TOKEN_THIS
         {literal,  NULL,   PREC_NONE},       // TOKEN_TRUE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_VAR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_WHILE
@@ -504,13 +570,13 @@ namespace cxxx {
         consume(compiler, TOKEN_IDENTIFIER, errorMessage);
 
         declareVariable(compiler);
-        if (compiler->compiler->scopeDepth > 0 || compiler->compiler->type == TYPE_FUNCTION) return 0;
+        if (compiler->compiler->scopeDepth > 0 || compiler->compiler->type != TYPE_SCRIPT) return 0;
 
         return identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
     }
 
     void defineVariable(CompilerInstance* compiler, uint8_t global) {
-        if (compiler->compiler->scopeDepth > 0 || compiler->compiler->type == TYPE_FUNCTION) {
+        if (compiler->compiler->scopeDepth > 0 || compiler->compiler->type != TYPE_SCRIPT) {
             markInitialized(compiler);
             return;
         }
@@ -728,6 +794,10 @@ namespace cxxx {
         local->depth = 0;
         local->name.start = "";
         local->name.length = 0;
+        if (type != TYPE_FUNCTION && type != TYPE_SCRIPT) {
+            local->name.start = "this";
+            local->name.length = 4;
+        }
 
         consume(compilerInstance, TOKEN_LEFT_PAREN, "Expect '(' after function name.");
         if (!check(compilerInstance, TOKEN_RIGHT_PAREN)) {
@@ -754,6 +824,64 @@ namespace cxxx {
         }
     }
 
+    void method(CompilerInstance* compiler) {
+        consume(compiler, TOKEN_IDENTIFIER, "Expect method name.");
+        uint8_t constant = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+
+        FunctionType type = TYPE_METHOD;
+        if (compiler->parser.previous.length == 4 && memcmp(compiler->parser.previous.start, "init", 4) == 0) {
+            type = TYPE_INITIALIZER;
+        }
+        function(compiler, type);
+        emitBytes(compiler, OP_METHOD, constant);
+    }
+
+    void classDeclaration(CompilerInstance* compiler) {
+        consume(compiler, TOKEN_IDENTIFIER, "Expect class name.");
+        Token className = compiler->parser.previous;
+        uint8_t nameConstant = identifierConstant(compiler, &className, compiler->internTable);
+        declareVariable(compiler);
+
+        emitBytes(compiler, OP_CLASS, nameConstant);
+        defineVariable(compiler, nameConstant);
+
+        ClassCompiler classCompiler;
+        classCompiler.enclosing = compiler->currentClass;
+        classCompiler.hasSuperclass = false;
+        compiler->currentClass = &classCompiler;
+
+        if (match(compiler, TOKEN_LESS)) {
+            consume(compiler, TOKEN_IDENTIFIER, "Expect superclass name.");
+            variable(compiler, false);
+
+            if (identifiersEqual(&className, &compiler->parser.previous)) {
+                error(compiler, "A class can't inherit from itself.");
+            }
+
+            beginScope(compiler);
+            addLocal(compiler, syntheticToken("super"));
+            defineVariable(compiler, 0);
+
+            namedVariable(compiler, className, false);
+            emitByte(compiler, OP_INHERIT);
+            classCompiler.hasSuperclass = true;
+        }
+
+        namedVariable(compiler, className, false);
+        consume(compiler, TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+        while (!check(compiler, TOKEN_RIGHT_BRACE) && !check(compiler, TOKEN_EOF)) {
+            method(compiler);
+        }
+        consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+        emitByte(compiler, OP_POP);
+
+        if (classCompiler.hasSuperclass) {
+            endScope(compiler);
+        }
+
+        compiler->currentClass = compiler->currentClass->enclosing;
+    }
+
     void funDeclaration(CompilerInstance* compiler) {
         uint8_t global = parseVariable(compiler, "Expect function name.");
         markInitialized(compiler);
@@ -762,7 +890,9 @@ namespace cxxx {
     }
 
     void declaration(CompilerInstance* compiler) {
-        if (match(compiler, TOKEN_FUN)) {
+        if (match(compiler, TOKEN_CLASS)) {
+            classDeclaration(compiler);
+        } else if (match(compiler, TOKEN_FUN)) {
             funDeclaration(compiler);
         } else if (match(compiler, TOKEN_VAR)) {
             varDeclaration(compiler);
@@ -807,6 +937,7 @@ namespace cxxx {
         compiler.type = TYPE_SCRIPT;
 
         compilerInstance.compiler = &compiler;
+        compilerInstance.currentClass = nullptr;
 
         advance(&compilerInstance);
 

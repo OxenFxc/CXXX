@@ -91,9 +91,48 @@ namespace cxxx {
                     break;
                 }
                 case OP_ADD: {
-                    double b = pop().asNumber();
-                    double a = pop().asNumber();
-                    push(NUMBER_VAL(a + b));
+                    if (isObjType(peek(0), OBJ_STRING) && isObjType(peek(1), OBJ_STRING)) {
+                        ObjString* b = (ObjString*)peek(0).as.obj;
+                        ObjString* a = (ObjString*)peek(1).as.obj;
+                        std::string s = a->str + b->str;
+                        pop();
+                        pop();
+                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                    } else if (peek(0).isNumber() && peek(1).isNumber()) {
+                        double b = pop().asNumber();
+                        double a = pop().asNumber();
+                        push(NUMBER_VAL(a + b));
+                    } else if (isObjType(peek(0), OBJ_STRING) && peek(1).isNumber()) {
+                        // Number + String -> String
+                        ObjString* b = (ObjString*)peek(0).as.obj;
+                        double aVal = peek(1).asNumber();
+                        std::string aStr = std::to_string(aVal);
+                        // Simple strip trailing zeros for display niceness
+                        if (aStr.find('.') != std::string::npos) {
+                            while (aStr.back() == '0') aStr.pop_back();
+                            if (aStr.back() == '.') aStr.pop_back();
+                        }
+                        std::string s = aStr + b->str;
+                        pop();
+                        pop();
+                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                    } else if (peek(0).isNumber() && isObjType(peek(1), OBJ_STRING)) {
+                        // String + Number -> String
+                        double bVal = peek(0).asNumber();
+                        ObjString* a = (ObjString*)peek(1).as.obj;
+                        std::string bStr = std::to_string(bVal);
+                        if (bStr.find('.') != std::string::npos) {
+                            while (bStr.back() == '0') bStr.pop_back();
+                            if (bStr.back() == '.') bStr.pop_back();
+                        }
+                        std::string s = a->str + bStr;
+                        pop();
+                        pop();
+                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                    } else {
+                        std::cerr << "Operands must be numbers or strings." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
                     break;
                 }
                 case OP_SUBTRACT: {

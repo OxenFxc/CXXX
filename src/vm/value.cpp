@@ -10,7 +10,15 @@ namespace cxxx {
             case VAL_BOOL: return a.as.boolean == b.as.boolean;
             case VAL_NIL: return true;
             case VAL_NUMBER: return a.as.number == b.as.number;
-            case VAL_OBJ: return a.as.obj == b.as.obj;
+            case VAL_OBJ: {
+                if (a.as.obj == b.as.obj) return true;
+                if (a.as.obj->type == OBJ_STRING && b.as.obj->type == OBJ_STRING) {
+                    ObjString* sa = (ObjString*)a.as.obj;
+                    ObjString* sb = (ObjString*)b.as.obj;
+                    return sa->str == sb->str;
+                }
+                return false;
+            }
             default: return false; // Should not happen
         }
     }

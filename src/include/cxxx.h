@@ -2,6 +2,7 @@
 #define cxxx_h
 
 #include <string>
+#include <cstdint>
 
 namespace cxxx {
 
@@ -11,12 +12,67 @@ namespace cxxx {
         RUNTIME_ERROR
     };
 
-    struct Value;
+    enum ValueType {
+        VAL_BOOL,
+        VAL_NIL,
+        VAL_NUMBER,
+        VAL_OBJ
+    };
+
+    // Forward declaration for Object (opaque to user)
+    struct Obj;
+
+    struct Value {
+        ValueType type;
+        union {
+            bool boolean;
+            double number;
+            Obj* obj;
+        } as;
+
+        bool isBool() const { return type == VAL_BOOL; }
+        bool isNil() const { return type == VAL_NIL; }
+        bool isNumber() const { return type == VAL_NUMBER; }
+        bool isObj() const { return type == VAL_OBJ; }
+
+        double asNumber() const { return as.number; }
+        bool asBool() const { return as.boolean; }
+        Obj* asObj() const { return as.obj; }
+
+        static Value boolean(bool value) {
+            Value v;
+            v.type = VAL_BOOL;
+            v.as.boolean = value;
+            return v;
+        }
+
+        static Value nil() {
+            Value v;
+            v.type = VAL_NIL;
+            v.as.number = 0;
+            return v;
+        }
+
+        static Value number(double value) {
+            Value v;
+            v.type = VAL_NUMBER;
+            v.as.number = value;
+            return v;
+        }
+
+        static Value object(Obj* object) {
+            Value v;
+            v.type = VAL_OBJ;
+            v.as.obj = object;
+            return v;
+        }
+    };
+
+    // Native function pointer type
+    typedef Value (*NativeFn)(int argCount, Value* args);
 
     class CXXX {
     public:
-        typedef struct Value (*NativeFn)(int argCount, struct Value* args);
-
         CXXX();
         ~CXXX();
 
@@ -29,6 +85,12 @@ namespace cxxx {
         // Get global variable value
         double getGlobalNumber(const std::string& name);
         bool getGlobalBool(const std::string& name);
+
+        // Set global variable value
+        void setGlobal(const std::string& name, Value val);
+
+        // Helper to create a string value (interned)
+        Value createString(const std::string& s);
 
         void registerFunction(const char* name, NativeFn fn);
 

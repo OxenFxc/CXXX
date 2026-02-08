@@ -85,9 +85,21 @@ namespace cxxx {
         return false;
     }
 
+    void CXXX::setGlobal(const std::string& name, Value val) {
+        VM* v = (VM*)vm;
+        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        v->globals.set(str, val);
+    }
+
+    Value CXXX::createString(const std::string& s) {
+        VM* v = (VM*)vm;
+        ObjString* str = copyString(s.c_str(), s.length(), &v->strings);
+        return Value::object((Obj*)str);
+    }
+
     void CXXX::registerFunction(const char* name, NativeFn fn) {
         VM* v = (VM*)vm;
         ObjString* fnName = copyString(name, strlen(name), &v->strings);
-        v->globals.set(fnName, OBJ_VAL((Obj*)allocateNative((cxxx::NativeFn)fn)));
+        v->globals.set(fnName, Value::object((Obj*)allocateNative(fn)));
     }
 }

@@ -56,6 +56,10 @@ namespace cxxx {
         return run();
     }
 
+    bool isFalsey(Value value) {
+        return value.isNil() || (value.isBool() && !value.asBool());
+    }
+
     InterpretResult VM::run() {
         // Simple placeholder for step 3
         // In next step, I will add the loop.
@@ -108,6 +112,42 @@ namespace cxxx {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
                     push(NUMBER_VAL(a / b));
+                    break;
+                }
+                case OP_NOT: {
+                    push(BOOL_VAL(isFalsey(pop())));
+                    break;
+                }
+                case OP_EQUAL: {
+                    Value b = pop();
+                    Value a = pop();
+                    push(BOOL_VAL(valuesEqual(a, b)));
+                    break;
+                }
+                case OP_GREATER: {
+                    double b = pop().asNumber();
+                    double a = pop().asNumber();
+                    push(BOOL_VAL(a > b));
+                    break;
+                }
+                case OP_LESS: {
+                    double b = pop().asNumber();
+                    double a = pop().asNumber();
+                    push(BOOL_VAL(a < b));
+                    break;
+                }
+                case OP_JUMP: {
+                    uint16_t offset = (uint16_t)(READ_BYTE() << 8);
+                    offset |= READ_BYTE();
+                    ip += offset;
+                    break;
+                }
+                case OP_JUMP_IF_FALSE: {
+                    uint16_t offset = (uint16_t)(READ_BYTE() << 8);
+                    offset |= READ_BYTE();
+                    if (isFalsey(peek(0))) {
+                        ip += offset;
+                    }
                     break;
                 }
                 case OP_POP: {

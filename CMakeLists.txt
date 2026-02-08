@@ -21,6 +21,6 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/src/cli/main.cpp")
     target_link_libraries(cxxx PRIVATE libcxxx)
 endif()
 
-# Enable testing later
-# enable_testing()
-# add_subdirectory(tests)
+# Enable testing
+enable_testing()
+add_subdirectory(tests)

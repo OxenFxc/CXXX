@@ -6,6 +6,7 @@ namespace cxxx {
     VM::VM() : globals(), strings() {
         resetStack();
         openUpvalues = nullptr;
+        objects = nullptr;
         frameCount = 0;
     }
 
@@ -16,11 +17,12 @@ namespace cxxx {
     void VM::init() {
         resetStack();
         openUpvalues = nullptr;
+        objects = nullptr;
         frameCount = 0;
     }
 
     void VM::free() {
-        // Nothing to free yet
+        freeObjects();
     }
 
     void VM::resetStack() {
@@ -32,7 +34,8 @@ namespace cxxx {
     void VM::push(Value value) {
         if (stackTop - stack >= STACK_MAX) {
             std::cerr << "Stack overflow!" << std::endl;
-            // In robust impl, we should signal error.
+            // In a real robust system, we would signal error, but here we just return to avoid crash.
+            // Or better, set an error flag.
             return;
         }
         *stackTop = value;
@@ -40,6 +43,10 @@ namespace cxxx {
     }
 
     Value VM::pop() {
+        if (stackTop == stack) {
+            std::cerr << "Stack underflow!" << std::endl;
+            return NIL_VAL();
+        }
         stackTop--;
         return *stackTop;
     }
@@ -53,7 +60,7 @@ namespace cxxx {
     }
 
     InterpretResult VM::interpret(ObjFunction* function) {
-        ObjClosure* closure = allocateClosure(function);
+        ObjClosure* closure = allocateClosure(this, function);
         push(OBJ_VAL((Obj*)closure));
         callValue(OBJ_VAL((Obj*)closure), 0);
 
@@ -97,7 +104,7 @@ namespace cxxx {
                         std::string s = a->str + b->str;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else if (peek(0).isNumber() && peek(1).isNumber()) {
                         double b = pop().asNumber();
                         double a = pop().asNumber();
@@ -107,7 +114,6 @@ namespace cxxx {
                         ObjString* b = (ObjString*)peek(0).as.obj;
                         double aVal = peek(1).asNumber();
                         std::string aStr = std::to_string(aVal);
-                        // Simple strip trailing zeros for display niceness
                         if (aStr.find('.') != std::string::npos) {
                             while (aStr.back() == '0') aStr.pop_back();
                             if (aStr.back() == '.') aStr.pop_back();
@@ -115,7 +121,7 @@ namespace cxxx {
                         std::string s = aStr + b->str;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else if (peek(0).isNumber() && isObjType(peek(1), OBJ_STRING)) {
                         // String + Number -> String
                         double bVal = peek(0).asNumber();
@@ -128,7 +134,7 @@ namespace cxxx {
                         std::string s = a->str + bStr;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(s.c_str(), (int)s.length())));
+                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else {
                         std::cerr << "Operands must be numbers or strings." << std::endl;
                         return InterpretResult::RUNTIME_ERROR;
@@ -235,7 +241,7 @@ namespace cxxx {
                     break;
                 }
                 case OP_CLASS: {
-                    push(OBJ_VAL((Obj*)allocateClass(READ_STRING())));
+                    push(OBJ_VAL((Obj*)allocateClass(this, READ_STRING())));
                     break;
                 }
                 case OP_METHOD: {
@@ -327,7 +333,7 @@ namespace cxxx {
                 }
                 case OP_CLOSURE: {
                     ObjFunction* function = (ObjFunction*)READ_CONSTANT().as.obj;
-                    ObjClosure* closure = allocateClosure(function);
+                    ObjClosure* closure = allocateClosure(this, function);
                     push(OBJ_VAL((Obj*)closure));
                     for (int i = 0; i < closure->upvalueCount; i++) {
                         uint8_t isLocal = READ_BYTE();
@@ -422,20 +428,20 @@ namespace cxxx {
 
         while (upvalue != nullptr && upvalue->location > local) {
             prevUpvalue = upvalue;
-            upvalue = upvalue->next;
+            upvalue = upvalue->nextUpvalue;
         }
 
         if (upvalue != nullptr && upvalue->location == local) {
             return upvalue;
         }
 
-        ObjUpvalue* createdUpvalue = allocateUpvalue(local);
-        createdUpvalue->next = upvalue;
+        ObjUpvalue* createdUpvalue = allocateUpvalue(this, local);
+        createdUpvalue->nextUpvalue = upvalue;
 
         if (prevUpvalue == nullptr) {
             openUpvalues = createdUpvalue;
         } else {
-            prevUpvalue->next = createdUpvalue;
+            prevUpvalue->nextUpvalue = createdUpvalue;
         }
 
         return createdUpvalue;
@@ -446,7 +452,7 @@ namespace cxxx {
             ObjUpvalue* upvalue = openUpvalues;
             upvalue->closed = *upvalue->location;
             upvalue->location = &upvalue->closed;
-            openUpvalues = upvalue->next;
+            openUpvalues = upvalue->nextUpvalue;
         }
     }
 
@@ -462,7 +468,7 @@ namespace cxxx {
         ObjClass* current = klass;
         while (current != nullptr) {
             if (current->methods->get(name, &method)) {
-                ObjBoundMethod* bound = allocateBoundMethod(peek(0), (ObjClosure*)method.as.obj);
+                ObjBoundMethod* bound = allocateBoundMethod(this, peek(0), (ObjClosure*)method.as.obj);
                 pop();
                 push(OBJ_VAL((Obj*)bound));
                 return true;
@@ -482,9 +488,9 @@ namespace cxxx {
         }
         else if (isObjType(callee, OBJ_CLASS)) {
             ObjClass* klass = (ObjClass*)callee.as.obj;
-            stackTop[-argCount - 1] = OBJ_VAL(allocateInstance(klass));
+            stackTop[-argCount - 1] = OBJ_VAL(allocateInstance(this, klass));
             Value initializer;
-            if (klass->methods->get(copyString("init", 4, &strings), &initializer)) {
+            if (klass->methods->get(copyString(this, "init", 4), &initializer)) {
                 return callValue(initializer, argCount);
             } else if (argCount != 0) {
                 std::cerr << "Expected 0 arguments but got " << argCount << "." << std::endl;
@@ -510,7 +516,7 @@ namespace cxxx {
         }
         else if (isObjType(callee, OBJ_NATIVE)) {
             NativeFn native = ((ObjNative*)callee.as.obj)->function;
-            Value result = native(argCount, stackTop - argCount);
+            Value result = native(this, argCount, stackTop - argCount);
             stackTop -= argCount + 1;
             push(result);
             return true;
@@ -550,4 +556,143 @@ namespace cxxx {
         return false;
     }
 
+    // GC
+
+    void VM::freeObjects() {
+        Obj* object = objects;
+        while (object != nullptr) {
+            Obj* next = object->next;
+            freeObject(object);
+            object = next;
+        }
+        objects = nullptr;
+    }
+
+    void VM::collectGarbage() {
+        markRoots();
+        traceReferences();
+        sweep();
+    }
+
+    void VM::markRoots() {
+        for (Value* slot = stack; slot < stackTop; slot++) {
+            markValue(*slot);
+        }
+
+        markTable(&globals);
+
+        // Closures on call frames are usually on stack, but marking them explicitly is safe
+        for (int i = 0; i < frameCount; i++) {
+            markObject((Obj*)frames[i].closure);
+        }
+
+        for (ObjUpvalue* upvalue = openUpvalues; upvalue != nullptr; upvalue = upvalue->nextUpvalue) {
+            markObject((Obj*)upvalue);
+        }
+    }
+
+    void VM::markTable(Table* table) {
+        for (int i = 0; i < table->capacity; i++) {
+            Entry* entry = &table->entries[i];
+            if (entry->key != nullptr) {
+                markObject((Obj*)entry->key);
+                markValue(entry->value);
+            }
+        }
+    }
+
+    void VM::markValue(Value value) {
+        if (value.isObj()) markObject(value.as.obj);
+    }
+
+    void VM::markObject(Obj* obj) {
+        if (obj == nullptr) return;
+        if (obj->isMarked) return;
+
+        obj->isMarked = true;
+        grayStack.push_back(obj);
+    }
+
+    void VM::traceReferences() {
+        while (!grayStack.empty()) {
+            Obj* obj = grayStack.back();
+            grayStack.pop_back();
+            blackenObject(obj);
+        }
+    }
+
+    void VM::blackenObject(Obj* obj) {
+        switch (obj->type) {
+            case OBJ_BOUND_METHOD: {
+                ObjBoundMethod* bound = (ObjBoundMethod*)obj;
+                markValue(bound->receiver);
+                markObject((Obj*)bound->method);
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass* klass = (ObjClass*)obj;
+                markObject((Obj*)klass->name);
+                markTable(klass->methods); // Keep methods alive
+                if (klass->superclass) markObject((Obj*)klass->superclass);
+                break;
+            }
+            case OBJ_CLOSURE: {
+                ObjClosure* closure = (ObjClosure*)obj;
+                markObject((Obj*)closure->function);
+                for (int i = 0; i < closure->upvalueCount; i++) {
+                    markObject((Obj*)closure->upvalues[i]);
+                }
+                break;
+            }
+            case OBJ_FUNCTION: {
+                ObjFunction* function = (ObjFunction*)obj;
+                markObject((Obj*)function->name);
+                for (size_t i = 0; i < function->chunk.constants.size(); i++) {
+                    markValue(function->chunk.constants[i]);
+                }
+                break;
+            }
+            case OBJ_INSTANCE: {
+                ObjInstance* instance = (ObjInstance*)obj;
+                markObject((Obj*)instance->klass);
+                markTable(instance->fields);
+                break;
+            }
+            case OBJ_UPVALUE:
+                markValue(((ObjUpvalue*)obj)->closed);
+                break;
+            case OBJ_NATIVE:
+            case OBJ_STRING:
+                break;
+        }
+    }
+
+    void VM::sweep() {
+        // Remove weak references from string table first
+        for (int i = 0; i < strings.capacity; i++) {
+            Entry* entry = &strings.entries[i];
+            if (entry->key != nullptr && !entry->key->isMarked) {
+                strings.deleteEntry(entry->key);
+            }
+        }
+
+        Obj* previous = nullptr;
+        Obj* object = objects;
+        while (object != nullptr) {
+            if (object->isMarked) {
+                object->isMarked = false;
+                previous = object;
+                object = object->next;
+            } else {
+                Obj* unreached = object;
+                object = object->next;
+                if (previous != nullptr) {
+                    previous->next = object;
+                } else {
+                    objects = object;
+                }
+                freeObject(unreached);
+            }
+        }
+    }
 }

@@ -29,7 +29,7 @@ int main() {
     std::cout << "Stack tests passed." << std::endl;
 
     // Minimal Run Test
-    ObjFunction* function = allocateFunction();
+    ObjFunction* function = allocateFunction(&vm);
     Chunk* chunk = &function->chunk;
 
     int constant = chunk->addConstant(NUMBER_VAL(42));

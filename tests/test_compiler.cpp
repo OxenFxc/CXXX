@@ -38,7 +38,7 @@ int main() {
     std::cout << "vm.globals address: " << &vm.globals << std::endl;
     std::cout << "Calling compile..." << std::endl;
 
-    ObjFunction* function = compile(source, &vm.strings); // &vm.strings
+    ObjFunction* function = compile(&vm, source);
     if (function != nullptr) {
         std::cout << "Compilation successful." << std::endl;
         function->chunk.disassemble("Compiled Chunk");
@@ -46,7 +46,7 @@ int main() {
         vm.interpret(function);
 
         // Check global 'result'
-        ObjString* name = copyString("result", 6, &vm.strings);
+        ObjString* name = copyString(&vm, "result", 6);
         std::cout << "Checking global 'result'. Address of name: " << name << " hash: " << name->hash << std::endl;
         Value val;
         if (vm.globals.get(name, &val)) {

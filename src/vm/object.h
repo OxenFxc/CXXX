@@ -20,9 +20,11 @@ namespace cxxx {
     };
 
     struct Obj; // Forward declare
+    class VM;   // Forward declare
 
     struct Obj {
         ObjType type;
+        bool isMarked;
         Obj* next; // For GC
     };
 
@@ -45,7 +47,7 @@ namespace cxxx {
     struct ObjUpvalue : public Obj {
         Value* location;
         Value closed;
-        ObjUpvalue* next; // For the open upvalue list
+        ObjUpvalue* nextUpvalue; // For the open upvalue list
     };
 
     struct ObjClosure : public Obj {
@@ -79,19 +81,20 @@ namespace cxxx {
     }
 
     // Helper functions
-    ObjString* allocateString(const std::string& str);
-    // If internTable is not null, it returns the interned string if found.
-    ObjString* copyString(const char* chars, int length, Table* internTable = nullptr);
-    ObjString* takeString(char* chars, int length, Table* internTable = nullptr);
+    ObjString* allocateString(VM* vm, const std::string& str);
+    // Uses vm->strings for interning if vm is provided (though vm is required now)
+    ObjString* copyString(VM* vm, const char* chars, int length);
+    ObjString* takeString(VM* vm, char* chars, int length);
 
-    ObjNative* allocateNative(NativeFn function);
-    ObjFunction* allocateFunction();
-    ObjUpvalue* allocateUpvalue(Value* slot);
-    ObjClosure* allocateClosure(ObjFunction* function);
-    ObjClass* allocateClass(ObjString* name);
-    ObjInstance* allocateInstance(ObjClass* klass);
-    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjClosure* method);
+    ObjNative* allocateNative(VM* vm, NativeFn function);
+    ObjFunction* allocateFunction(VM* vm);
+    ObjUpvalue* allocateUpvalue(VM* vm, Value* slot);
+    ObjClosure* allocateClosure(VM* vm, ObjFunction* function);
+    ObjClass* allocateClass(VM* vm, ObjString* name);
+    ObjInstance* allocateInstance(VM* vm, ObjClass* klass);
+    ObjBoundMethod* allocateBoundMethod(VM* vm, Value receiver, ObjClosure* method);
 
+    void freeObject(Obj* obj);
     void printObject(Value value);
 
 }

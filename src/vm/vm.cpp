@@ -316,6 +316,38 @@ namespace cxxx {
                     pop();
                     break;
                 }
+                case OP_INSTANCEOF: {
+                    Value superclass = peek(0);
+                    if (!isObjType(superclass, OBJ_CLASS)) {
+                        std::cerr << "Right operand must be a class." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    Value instance = peek(1);
+                    if (!isObjType(instance, OBJ_INSTANCE)) {
+                        pop(); // superclass
+                        pop(); // instance
+                        push(BOOL_VAL(false));
+                        break;
+                    }
+
+                    ObjClass* targetClass = (ObjClass*)superclass.as.obj;
+                    ObjInstance* obj = (ObjInstance*)instance.as.obj;
+                    ObjClass* currentClass = obj->klass;
+
+                    bool found = false;
+                    while (currentClass != nullptr) {
+                        if (currentClass == targetClass) {
+                            found = true;
+                            break;
+                        }
+                        currentClass = currentClass->superclass;
+                    }
+
+                    pop(); // superclass
+                    pop(); // instance
+                    push(BOOL_VAL(found));
+                    break;
+                }
                 case OP_NEGATE: {
                     push(NUMBER_VAL(-pop().asNumber()));
                     break;

@@ -442,6 +442,7 @@ namespace cxxx {
             case TOKEN_MINUS:         emitByte(compiler, OP_SUBTRACT); break;
             case TOKEN_STAR:          emitByte(compiler, OP_MULTIPLY); break;
             case TOKEN_SLASH:         emitByte(compiler, OP_DIVIDE); break;
+            case TOKEN_INSTANCEOF:    emitByte(compiler, OP_INSTANCEOF); break;
             default: return; // Unreachable.
         }
     }
@@ -569,6 +570,7 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_FOR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_FUN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_IF
+        {NULL,     binary, PREC_COMPARISON}, // TOKEN_INSTANCEOF
         {literal,  NULL,   PREC_NONE},       // TOKEN_NIL
         {NULL,     NULL,   PREC_NONE},       // TOKEN_OR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_PRINT

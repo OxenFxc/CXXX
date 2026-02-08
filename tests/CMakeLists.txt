@@ -14,6 +14,7 @@ set(TEST_SOURCES
     test_oo.cpp
     test_closure.cpp
     test_super.cpp
+    test_completion_oop.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

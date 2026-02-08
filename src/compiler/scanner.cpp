@@ -104,7 +104,14 @@ namespace cxxx {
                     }
                 }
                 break;
-            case 'i': return checkKeyword(1, 1, "f", TOKEN_IF);
+            case 'i':
+                if (current - start > 1) {
+                    switch (start[1]) {
+                        case 'f': return checkKeyword(2, 0, "", TOKEN_IF);
+                        case 'n': return checkKeyword(2, 8, "stanceof", TOKEN_INSTANCEOF);
+                    }
+                }
+                break;
             case 'n': return checkKeyword(1, 2, "il", TOKEN_NIL);
             case 'o': return checkKeyword(1, 1, "r", TOKEN_OR);
             case 'p': return checkKeyword(1, 4, "rint", TOKEN_PRINT);

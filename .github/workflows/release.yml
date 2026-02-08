@@ -49,6 +49,12 @@ jobs:
       run: |
         tar -czvf cxxx-linux-amd64.tar.gz -C build cxxx
 
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: cxxx-linux-amd64
+        path: cxxx-linux-amd64.tar.gz
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')

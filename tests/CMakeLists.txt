@@ -15,6 +15,8 @@ set(TEST_SOURCES
     test_closure.cpp
     test_super.cpp
     test_completion_oop.cpp
+    test_nested.cpp
+    test_for_scope.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

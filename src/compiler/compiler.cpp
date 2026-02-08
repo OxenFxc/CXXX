@@ -541,6 +541,12 @@ namespace cxxx {
     // Forward declare call
     void call(CompilerInstance* compiler, bool canAssign);
 
+    void string_literal(CompilerInstance* compiler, bool canAssign) {
+        emitConstant(compiler, OBJ_VAL((Obj*)copyString(compiler->parser.previous.start + 1,
+                                                        compiler->parser.previous.length - 2,
+                                                        compiler->internTable)));
+    }
+
     ParseRule rules[] = {
         {grouping, call,   PREC_CALL},       // TOKEN_LEFT_PAREN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RIGHT_PAREN
@@ -570,7 +576,7 @@ namespace cxxx {
         {NULL,     ternary,PREC_TERNARY},    // TOKEN_QUESTION
         {NULL,     NULL,   PREC_NONE},       // TOKEN_COLON
         {variable, NULL,   PREC_NONE},       // TOKEN_IDENTIFIER
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_STRING
+        {string_literal, NULL,   PREC_NONE}, // TOKEN_STRING
         {number,   NULL,   PREC_NONE},       // TOKEN_NUMBER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_AND
         {NULL,     NULL,   PREC_NONE},       // TOKEN_BREAK
@@ -883,6 +889,7 @@ namespace cxxx {
     }
 
     void forStatement(CompilerInstance* compiler) {
+        beginScope(compiler);
         consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
         if (match(compiler, TOKEN_SEMICOLON)) {
             // No initializer.
@@ -930,6 +937,7 @@ namespace cxxx {
         }
 
         endLoop(compiler);
+        endScope(compiler);
     }
 
     void ifStatement(CompilerInstance* compiler) {

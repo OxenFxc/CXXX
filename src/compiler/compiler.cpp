@@ -180,10 +180,16 @@ namespace cxxx {
         parsePrecedence(compiler, (Precedence)(rule->precedence + 1));
 
         switch (operatorType) {
-            case TOKEN_PLUS: emitByte(compiler, OP_ADD); break;
-            case TOKEN_MINUS: emitByte(compiler, OP_SUBTRACT); break;
-            case TOKEN_STAR: emitByte(compiler, OP_MULTIPLY); break;
-            case TOKEN_SLASH: emitByte(compiler, OP_DIVIDE); break;
+            case TOKEN_BANG_EQUAL:    emitBytes(compiler, OP_EQUAL, OP_NOT); break;
+            case TOKEN_EQUAL_EQUAL:   emitByte(compiler, OP_EQUAL); break;
+            case TOKEN_GREATER:       emitByte(compiler, OP_GREATER); break;
+            case TOKEN_GREATER_EQUAL: emitBytes(compiler, OP_LESS, OP_NOT); break;
+            case TOKEN_LESS:          emitByte(compiler, OP_LESS); break;
+            case TOKEN_LESS_EQUAL:    emitBytes(compiler, OP_GREATER, OP_NOT); break;
+            case TOKEN_PLUS:          emitByte(compiler, OP_ADD); break;
+            case TOKEN_MINUS:         emitByte(compiler, OP_SUBTRACT); break;
+            case TOKEN_STAR:          emitByte(compiler, OP_MULTIPLY); break;
+            case TOKEN_SLASH:         emitByte(compiler, OP_DIVIDE); break;
             default: return; // Unreachable.
         }
     }
@@ -199,6 +205,15 @@ namespace cxxx {
         emitConstant(compiler, NUMBER_VAL(value));
     }
 
+    void literal(CompilerInstance* compiler, bool canAssign) {
+        switch (compiler->parser.previous.type) {
+            case TOKEN_FALSE: emitConstant(compiler, BOOL_VAL(false)); break;
+            case TOKEN_NIL:   emitConstant(compiler, NIL_VAL()); break;
+            case TOKEN_TRUE:  emitConstant(compiler, BOOL_VAL(true)); break;
+            default: return; // Unreachable.
+        }
+    }
+
     void unary(CompilerInstance* compiler, bool canAssign) {
         TokenType operatorType = compiler->parser.previous.type;
 
@@ -207,6 +222,7 @@ namespace cxxx {
 
         // Emit the operator instruction.
         switch (operatorType) {
+            case TOKEN_BANG:  emitByte(compiler, OP_NOT); break;
             case TOKEN_MINUS: emitByte(compiler, OP_NEGATE); break;
             default: return; // Unreachable.
         }
@@ -227,31 +243,31 @@ namespace cxxx {
         {NULL,     NULL,   PREC_NONE},       // TOKEN_SEMICOLON
         {NULL,     binary, PREC_FACTOR},     // TOKEN_SLASH
         {NULL,     binary, PREC_FACTOR},     // TOKEN_STAR
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_BANG
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_BANG_EQUAL
+        {unary,    NULL,   PREC_NONE},       // TOKEN_BANG
+        {NULL,     binary, PREC_EQUALITY},   // TOKEN_BANG_EQUAL
         {NULL,     NULL,   PREC_NONE},       // TOKEN_EQUAL
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_EQUAL_EQUAL
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_GREATER
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_GREATER_EQUAL
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_LESS
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_LESS_EQUAL
+        {NULL,     binary, PREC_EQUALITY},   // TOKEN_EQUAL_EQUAL
+        {NULL,     binary, PREC_COMPARISON}, // TOKEN_GREATER
+        {NULL,     binary, PREC_COMPARISON}, // TOKEN_GREATER_EQUAL
+        {NULL,     binary, PREC_COMPARISON}, // TOKEN_LESS
+        {NULL,     binary, PREC_COMPARISON}, // TOKEN_LESS_EQUAL
         {variable, NULL,   PREC_NONE},       // TOKEN_IDENTIFIER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_STRING
         {number,   NULL,   PREC_NONE},       // TOKEN_NUMBER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_AND
         {NULL,     NULL,   PREC_NONE},       // TOKEN_CLASS
         {NULL,     NULL,   PREC_NONE},       // TOKEN_ELSE
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_FALSE
+        {literal,  NULL,   PREC_NONE},       // TOKEN_FALSE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_FOR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_FUN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_IF
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_NIL
+        {literal,  NULL,   PREC_NONE},       // TOKEN_NIL
         {NULL,     NULL,   PREC_NONE},       // TOKEN_OR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_PRINT
         {NULL,     NULL,   PREC_NONE},       // TOKEN_RETURN
         {NULL,     NULL,   PREC_NONE},       // TOKEN_SUPER
         {NULL,     NULL,   PREC_NONE},       // TOKEN_THIS
-        {NULL,     NULL,   PREC_NONE},       // TOKEN_TRUE
+        {literal,  NULL,   PREC_NONE},       // TOKEN_TRUE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_VAR
         {NULL,     NULL,   PREC_NONE},       // TOKEN_WHILE
         {NULL,     NULL,   PREC_NONE},       // TOKEN_ERROR
@@ -322,9 +338,66 @@ namespace cxxx {
         emitByte(compiler, OP_PRINT);
     }
 
+    int emitJump(CompilerInstance* compiler, uint8_t instruction) {
+        emitByte(compiler, instruction);
+        emitByte(compiler, 0xff);
+        emitByte(compiler, 0xff);
+        return currentChunk(compiler)->code.size() - 2;
+    }
+
+    void patchJump(CompilerInstance* compiler, int offset) {
+        // -2 to adjust for the bytecode for the jump offset itself.
+        int jump = currentChunk(compiler)->code.size() - offset - 2;
+
+        if (jump > UINT16_MAX) {
+            error(compiler, "Too much code to jump over.");
+        }
+
+        currentChunk(compiler)->code[offset] = (jump >> 8) & 0xff;
+        currentChunk(compiler)->code[offset + 1] = jump & 0xff;
+    }
+
+    void declaration(CompilerInstance* compiler);
+    void statement(CompilerInstance* compiler);
+
+    bool check(CompilerInstance* compiler, TokenType type) {
+        return compiler->parser.current.type == type;
+    }
+
+    void block(CompilerInstance* compiler) {
+        while (!check(compiler, TOKEN_RIGHT_BRACE) && !check(compiler, TOKEN_EOF)) {
+            declaration(compiler);
+        }
+        consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+    }
+
+    void ifStatement(CompilerInstance* compiler) {
+        consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+        expression(compiler);
+        consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        int thenJump = emitJump(compiler, OP_JUMP_IF_FALSE);
+        emitByte(compiler, OP_POP);
+        statement(compiler);
+
+        int elseJump = emitJump(compiler, OP_JUMP);
+
+        patchJump(compiler, thenJump);
+        emitByte(compiler, OP_POP);
+
+        if (match(compiler, TOKEN_ELSE)) {
+            statement(compiler);
+        }
+        patchJump(compiler, elseJump);
+    }
+
     void statement(CompilerInstance* compiler) {
         if (match(compiler, TOKEN_PRINT)) {
             printStatement(compiler);
+        } else if (match(compiler, TOKEN_IF)) {
+            ifStatement(compiler);
+        } else if (match(compiler, TOKEN_LEFT_BRACE)) {
+            block(compiler);
         } else {
             expressionStatement(compiler);
         }

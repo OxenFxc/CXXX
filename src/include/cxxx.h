@@ -26,6 +26,10 @@ namespace cxxx {
         // Returns 0.0 if not a number or stack empty.
         double getResult();
 
+        // Get global variable value
+        double getGlobalNumber(const std::string& name);
+        bool getGlobalBool(const std::string& name);
+
         void registerFunction(const char* name, NativeFn fn);
 
         // Internal: load stdlib

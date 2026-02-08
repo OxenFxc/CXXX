@@ -64,6 +64,26 @@ namespace cxxx {
         return lastResult;
     }
 
+    double CXXX::getGlobalNumber(const std::string& name) {
+        VM* v = (VM*)vm;
+        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        Value val;
+        if (v->globals.get(str, &val)) {
+            if (val.isNumber()) return val.asNumber();
+        }
+        return 0.0;
+    }
+
+    bool CXXX::getGlobalBool(const std::string& name) {
+        VM* v = (VM*)vm;
+        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        Value val;
+        if (v->globals.get(str, &val)) {
+            if (val.isBool()) return val.asBool();
+        }
+        return false;
+    }
+
     void CXXX::registerFunction(const char* name, NativeFn fn) {
         VM* v = (VM*)vm;
         ObjString* fnName = copyString(name, strlen(name), &v->strings);

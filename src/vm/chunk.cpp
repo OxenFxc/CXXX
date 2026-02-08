@@ -61,6 +61,30 @@ namespace cxxx {
             case OP_DIVIDE:
                 std::cout << "OP_DIVIDE" << std::endl;
                 return offset + 1;
+            case OP_NOT:
+                std::cout << "OP_NOT" << std::endl;
+                return offset + 1;
+            case OP_EQUAL:
+                std::cout << "OP_EQUAL" << std::endl;
+                return offset + 1;
+            case OP_GREATER:
+                std::cout << "OP_GREATER" << std::endl;
+                return offset + 1;
+            case OP_LESS:
+                std::cout << "OP_LESS" << std::endl;
+                return offset + 1;
+            case OP_JUMP:
+                {
+                    uint16_t jump = (uint16_t)((code[offset + 1] << 8) | code[offset + 2]);
+                    std::cout << std::left << std::setw(16) << "OP_JUMP" << offset << " -> " << offset + 3 + jump << std::endl;
+                    return offset + 3;
+                }
+            case OP_JUMP_IF_FALSE:
+                {
+                    uint16_t jump = (uint16_t)((code[offset + 1] << 8) | code[offset + 2]);
+                    std::cout << std::left << std::setw(16) << "OP_JUMP_IF_FALSE" << offset << " -> " << offset + 3 + jump << std::endl;
+                    return offset + 3;
+                }
             case OP_POP:
                 std::cout << "OP_POP" << std::endl;
                 return offset + 1;

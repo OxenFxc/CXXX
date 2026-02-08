@@ -12,6 +12,8 @@ namespace cxxx {
         OBJ_STRING,
         OBJ_NATIVE,
         OBJ_FUNCTION,
+        OBJ_CLOSURE,
+        OBJ_UPVALUE,
         OBJ_CLASS,
         OBJ_INSTANCE,
         OBJ_BOUND_METHOD
@@ -35,8 +37,21 @@ namespace cxxx {
 
     struct ObjFunction : public Obj {
         int arity;
+        int upvalueCount;
         Chunk chunk;
         ObjString* name;
+    };
+
+    struct ObjUpvalue : public Obj {
+        Value* location;
+        Value closed;
+        ObjUpvalue* next; // For the open upvalue list
+    };
+
+    struct ObjClosure : public Obj {
+        ObjFunction* function;
+        ObjUpvalue** upvalues;
+        int upvalueCount;
     };
 
     // Forward declare Table
@@ -56,7 +71,7 @@ namespace cxxx {
 
     struct ObjBoundMethod : public Obj {
         Value receiver;
-        ObjFunction* method;
+        ObjClosure* method;
     };
 
     inline bool isObjType(Value value, ObjType type) {
@@ -71,9 +86,11 @@ namespace cxxx {
 
     ObjNative* allocateNative(NativeFn function);
     ObjFunction* allocateFunction();
+    ObjUpvalue* allocateUpvalue(Value* slot);
+    ObjClosure* allocateClosure(ObjFunction* function);
     ObjClass* allocateClass(ObjString* name);
     ObjInstance* allocateInstance(ObjClass* klass);
-    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjFunction* method);
+    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjClosure* method);
 
     void printObject(Value value);
 

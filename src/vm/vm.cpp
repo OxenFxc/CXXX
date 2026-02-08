@@ -5,6 +5,7 @@ namespace cxxx {
 
     VM::VM() : globals(), strings() {
         resetStack();
+        openUpvalues = nullptr;
         frameCount = 0;
     }
 
@@ -14,6 +15,7 @@ namespace cxxx {
 
     void VM::init() {
         resetStack();
+        openUpvalues = nullptr;
         frameCount = 0;
     }
 
@@ -24,6 +26,7 @@ namespace cxxx {
     void VM::resetStack() {
         stackTop = stack;
         frameCount = 0;
+        openUpvalues = nullptr;
     }
 
     void VM::push(Value value) {
@@ -50,11 +53,9 @@ namespace cxxx {
     }
 
     InterpretResult VM::interpret(ObjFunction* function) {
-        push(OBJ_VAL((Obj*)function));
-        CallFrame* frame = &frames[frameCount++];
-        frame->function = function;
-        frame->ip = function->chunk.code.data();
-        frame->slots = stack;
+        ObjClosure* closure = allocateClosure(function);
+        push(OBJ_VAL((Obj*)closure));
+        callValue(OBJ_VAL((Obj*)closure), 0);
 
         return run();
     }
@@ -67,7 +68,7 @@ namespace cxxx {
         CallFrame* frame = &frames[frameCount - 1];
 
         #define READ_BYTE() (*frame->ip++)
-        #define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
+        #define READ_CONSTANT() (frame->closure->function->chunk.constants[READ_BYTE()])
         #define READ_STRING() ((ObjString*)READ_CONSTANT().as.obj)
 
         for (;;) {
@@ -79,7 +80,7 @@ namespace cxxx {
                     std::cout << " ]";
                 }
                 std::cout << std::endl;
-                frame->function->chunk.disassembleInstruction((int)(frame->ip - frame->function->chunk.code.data()));
+                frame->closure->function->chunk.disassembleInstruction((int)(frame->ip - frame->closure->function->chunk.code.data()));
             #endif
 
             uint8_t instruction;
@@ -285,12 +286,43 @@ namespace cxxx {
                     std::cout << std::endl;
                     break;
                 }
+                case OP_CLOSURE: {
+                    ObjFunction* function = (ObjFunction*)READ_CONSTANT().as.obj;
+                    ObjClosure* closure = allocateClosure(function);
+                    push(OBJ_VAL((Obj*)closure));
+                    for (int i = 0; i < closure->upvalueCount; i++) {
+                        uint8_t isLocal = READ_BYTE();
+                        uint8_t index = READ_BYTE();
+                        if (isLocal) {
+                            closure->upvalues[i] = captureUpvalue(frame->slots + index);
+                        } else {
+                            closure->upvalues[i] = frame->closure->upvalues[index];
+                        }
+                    }
+                    break;
+                }
+                case OP_GET_UPVALUE: {
+                    uint8_t slot = READ_BYTE();
+                    push(*frame->closure->upvalues[slot]->location);
+                    break;
+                }
+                case OP_SET_UPVALUE: {
+                    uint8_t slot = READ_BYTE();
+                    *frame->closure->upvalues[slot]->location = peek(0);
+                    break;
+                }
+                case OP_CLOSE_UPVALUE: {
+                    closeUpvalues(stackTop - 1);
+                    pop();
+                    break;
+                }
                 case OP_NEGATE: {
                     push(NUMBER_VAL(-pop().asNumber()));
                     break;
                 }
                 case OP_RETURN: {
                     Value result = pop();
+                    closeUpvalues(frame->slots);
                     frameCount--;
                     if (frameCount == 0) {
                         pop();
@@ -313,6 +345,40 @@ namespace cxxx {
         #undef READ_STRING
     }
 
+    ObjUpvalue* VM::captureUpvalue(Value* local) {
+        ObjUpvalue* prevUpvalue = nullptr;
+        ObjUpvalue* upvalue = openUpvalues;
+
+        while (upvalue != nullptr && upvalue->location > local) {
+            prevUpvalue = upvalue;
+            upvalue = upvalue->next;
+        }
+
+        if (upvalue != nullptr && upvalue->location == local) {
+            return upvalue;
+        }
+
+        ObjUpvalue* createdUpvalue = allocateUpvalue(local);
+        createdUpvalue->next = upvalue;
+
+        if (prevUpvalue == nullptr) {
+            openUpvalues = createdUpvalue;
+        } else {
+            prevUpvalue->next = createdUpvalue;
+        }
+
+        return createdUpvalue;
+    }
+
+    void VM::closeUpvalues(Value* last) {
+        while (openUpvalues != nullptr && openUpvalues->location >= last) {
+            ObjUpvalue* upvalue = openUpvalues;
+            upvalue->closed = *upvalue->location;
+            upvalue->location = &upvalue->closed;
+            openUpvalues = upvalue->next;
+        }
+    }
+
     void VM::defineMethod(ObjString* name) {
         Value method = peek(0);
         ObjClass* klass = (ObjClass*)peek(1).as.obj;
@@ -325,7 +391,7 @@ namespace cxxx {
         ObjClass* current = klass;
         while (current != nullptr) {
             if (current->methods->get(name, &method)) {
-                ObjBoundMethod* bound = allocateBoundMethod(peek(0), (ObjFunction*)method.as.obj);
+                ObjBoundMethod* bound = allocateBoundMethod(peek(0), (ObjClosure*)method.as.obj);
                 pop();
                 push(OBJ_VAL((Obj*)bound));
                 return true;
@@ -355,10 +421,10 @@ namespace cxxx {
             }
             return true;
         }
-        else if (isObjType(callee, OBJ_FUNCTION)) {
-            ObjFunction* function = (ObjFunction*)callee.as.obj;
-            if (argCount != function->arity) {
-                std::cerr << "Expected " << function->arity << " arguments but got " << argCount << "." << std::endl;
+        else if (isObjType(callee, OBJ_CLOSURE)) {
+            ObjClosure* closure = (ObjClosure*)callee.as.obj;
+            if (argCount != closure->function->arity) {
+                std::cerr << "Expected " << closure->function->arity << " arguments but got " << argCount << "." << std::endl;
                 return false;
             }
             if (frameCount == FRAMES_MAX) {
@@ -366,8 +432,8 @@ namespace cxxx {
                 return false;
             }
             CallFrame* newFrame = &frames[frameCount++];
-            newFrame->function = function;
-            newFrame->ip = function->chunk.code.data();
+            newFrame->closure = closure;
+            newFrame->ip = closure->function->chunk.code.data();
             newFrame->slots = stackTop - argCount - 1;
             return true;
         }

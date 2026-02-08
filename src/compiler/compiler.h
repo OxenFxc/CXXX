@@ -8,7 +8,9 @@
 
 namespace cxxx {
 
-    ObjFunction* compile(const std::string& source, Table* internTable);
+    class VM;
+
+    ObjFunction* compile(VM* vm, const std::string& source);
 
 }
 

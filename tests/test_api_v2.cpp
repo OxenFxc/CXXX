@@ -4,7 +4,7 @@
 #include <cmath>
 
 // Native function to increment a number
-cxxx::Value nativeIncrement(int argCount, cxxx::Value* args) {
+cxxx::Value nativeIncrement(void* vm, int argCount, cxxx::Value* args) {
     if (argCount != 1 || !args[0].isNumber()) {
         return cxxx::Value::nil();
     }

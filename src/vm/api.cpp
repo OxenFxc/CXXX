@@ -25,7 +25,7 @@ namespace cxxx {
     InterpretResult CXXX::interpret(const std::string& source) {
         VM* v = (VM*)vm;
 
-        ObjFunction* function = compile(source, &v->strings);
+        ObjFunction* function = compile(v, source);
         if (function == nullptr) {
             return InterpretResult::COMPILE_ERROR;
         }
@@ -41,19 +41,7 @@ namespace cxxx {
                  } else {
                      lastResult = 0.0;
                  }
-                 // Keep stack clean? No, we just popped.
              } else {
-                 // std::cout << "Stack empty after interpret." << std::endl;
-                 // lastResult = 0.0;
-                 // If stack is empty, we keep previous lastResult? Or reset?
-                 // For now, reset.
-                 // lastResult = 0.0; // Don't reset, so we can see side-effect results?
-                 // But wait, "var a = ..." leaves stack empty.
-                 // "a;" leaves value on stack.
-                 // So if "a;" is last, we get it.
-                 // If "print a;" is last, stack is empty.
-                 // So getResult() returns 0 or prev value?
-                 // Let's reset to avoid confusion.
                  lastResult = 0.0;
              }
         }
@@ -67,7 +55,7 @@ namespace cxxx {
 
     double CXXX::getGlobalNumber(const std::string& name) {
         VM* v = (VM*)vm;
-        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        ObjString* str = copyString(v, name.c_str(), name.length());
         Value val;
         if (v->globals.get(str, &val)) {
             if (val.isNumber()) return val.asNumber();
@@ -77,7 +65,7 @@ namespace cxxx {
 
     bool CXXX::getGlobalBool(const std::string& name) {
         VM* v = (VM*)vm;
-        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        ObjString* str = copyString(v, name.c_str(), name.length());
         Value val;
         if (v->globals.get(str, &val)) {
             if (val.isBool()) return val.asBool();
@@ -87,19 +75,19 @@ namespace cxxx {
 
     void CXXX::setGlobal(const std::string& name, Value val) {
         VM* v = (VM*)vm;
-        ObjString* str = copyString(name.c_str(), name.length(), &v->strings);
+        ObjString* str = copyString(v, name.c_str(), name.length());
         v->globals.set(str, val);
     }
 
     Value CXXX::createString(const std::string& s) {
         VM* v = (VM*)vm;
-        ObjString* str = copyString(s.c_str(), s.length(), &v->strings);
+        ObjString* str = copyString(v, s.c_str(), s.length());
         return Value::object((Obj*)str);
     }
 
     void CXXX::registerFunction(const char* name, NativeFn fn) {
         VM* v = (VM*)vm;
-        ObjString* fnName = copyString(name, strlen(name), &v->strings);
-        v->globals.set(fnName, Value::object((Obj*)allocateNative(fn)));
+        ObjString* fnName = copyString(v, name, strlen(name));
+        v->globals.set(fnName, Value::object((Obj*)allocateNative(v, fn)));
     }
 }

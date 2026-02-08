@@ -7,6 +7,7 @@
 #include "table.h"
 #include "object.h"
 #include "../include/cxxx.h" // For InterpretResult
+#include <vector>
 
 namespace cxxx {
 
@@ -37,6 +38,20 @@ namespace cxxx {
 
         Table globals;
         Table strings;
+
+        // GC
+        Obj* objects; // Linked list of all objects
+        std::vector<Obj*> grayStack; // For GC marking
+
+        void collectGarbage();
+        void markObject(Obj* obj);
+        void markValue(Value value);
+        void markRoots();
+        void traceReferences();
+        void blackenObject(Obj* obj);
+        void sweep();
+        void freeObjects();
+        void markTable(Table* table);
 
     private:
         CallFrame frames[FRAMES_MAX];

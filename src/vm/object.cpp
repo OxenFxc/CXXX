@@ -1,5 +1,6 @@
 #include "object.h"
 #include "table.h"
+#include "vm.h"
 #include <iostream>
 #include <cstring>
 
@@ -14,109 +15,163 @@ namespace cxxx {
         return hash;
     }
 
-    ObjString* allocateString(const std::string& str) {
+    ObjString* allocateString(VM* vm, const std::string& str) {
         ObjString* obj = new ObjString();
         obj->type = OBJ_STRING;
-        obj->next = nullptr; // TODO: Hook into GC list
+        obj->isMarked = false;
+        obj->next = vm->objects;
+        vm->objects = obj;
         obj->str = str;
         obj->hash = hashString(str.c_str(), str.length());
         return obj;
     }
 
-    ObjString* copyString(const char* chars, int length, Table* internTable) {
+    ObjString* copyString(VM* vm, const char* chars, int length) {
         uint32_t hash = hashString(chars, length);
-        if (internTable != nullptr) {
-            ObjString* interned = internTable->findString(chars, length, hash);
-            if (interned != nullptr) return interned;
-        }
+        ObjString* interned = vm->strings.findString(chars, length, hash);
+        if (interned != nullptr) return interned;
 
-        ObjString* obj = allocateString(std::string(chars, length));
-        if (internTable != nullptr) {
-            internTable->set(obj, NIL_VAL());
-        }
+        ObjString* obj = allocateString(vm, std::string(chars, length));
+        vm->strings.set(obj, NIL_VAL());
         return obj;
     }
 
-    ObjString* takeString(char* chars, int length, Table* internTable) {
+    ObjString* takeString(VM* vm, char* chars, int length) {
         uint32_t hash = hashString(chars, length);
-        if (internTable != nullptr) {
-            ObjString* interned = internTable->findString(chars, length, hash);
-            if (interned != nullptr) return interned;
-        }
+        ObjString* interned = vm->strings.findString(chars, length, hash);
+        if (interned != nullptr) return interned;
 
-        ObjString* obj = allocateString(std::string(chars, length));
-        if (internTable != nullptr) {
-            internTable->set(obj, NIL_VAL());
-        }
+        ObjString* obj = allocateString(vm, std::string(chars, length));
+        vm->strings.set(obj, NIL_VAL());
         return obj;
     }
 
-    ObjNative* allocateNative(NativeFn function) {
+    ObjNative* allocateNative(VM* vm, NativeFn function) {
         ObjNative* native = new ObjNative();
         native->type = OBJ_NATIVE;
-        native->next = nullptr;
+        native->isMarked = false;
+        native->next = vm->objects;
+        vm->objects = native;
         native->function = function;
         return native;
     }
 
-    ObjFunction* allocateFunction() {
+    ObjFunction* allocateFunction(VM* vm) {
         ObjFunction* function = new ObjFunction();
         function->type = OBJ_FUNCTION;
-        function->next = nullptr;
+        function->isMarked = false;
+        function->next = vm->objects;
+        vm->objects = function;
         function->arity = 0;
         function->upvalueCount = 0;
         function->name = nullptr;
         return function;
     }
 
-    ObjUpvalue* allocateUpvalue(Value* slot) {
+    ObjUpvalue* allocateUpvalue(VM* vm, Value* slot) {
         ObjUpvalue* upvalue = new ObjUpvalue();
         upvalue->type = OBJ_UPVALUE;
+        upvalue->isMarked = false;
+        upvalue->next = vm->objects;
+        vm->objects = upvalue;
         upvalue->location = slot;
-        upvalue->next = nullptr;
         upvalue->closed = NIL_VAL();
+        upvalue->nextUpvalue = nullptr;
         return upvalue;
     }
 
-    ObjClosure* allocateClosure(ObjFunction* function) {
+    ObjClosure* allocateClosure(VM* vm, ObjFunction* function) {
         ObjClosure* closure = new ObjClosure();
         closure->type = OBJ_CLOSURE;
+        closure->isMarked = false;
+        closure->next = vm->objects;
+        vm->objects = closure;
         closure->function = function;
         closure->upvalues = new ObjUpvalue*[function->upvalueCount];
         closure->upvalueCount = function->upvalueCount;
         for (int i = 0; i < function->upvalueCount; i++) {
             closure->upvalues[i] = nullptr;
         }
-        closure->next = nullptr;
         return closure;
     }
 
-    ObjClass* allocateClass(ObjString* name) {
+    ObjClass* allocateClass(VM* vm, ObjString* name) {
         ObjClass* klass = new ObjClass();
         klass->type = OBJ_CLASS;
+        klass->isMarked = false;
+        klass->next = vm->objects;
+        vm->objects = klass;
         klass->name = name;
         klass->methods = new Table();
         klass->superclass = nullptr;
-        klass->next = nullptr;
         return klass;
     }
 
-    ObjInstance* allocateInstance(ObjClass* klass) {
+    ObjInstance* allocateInstance(VM* vm, ObjClass* klass) {
         ObjInstance* instance = new ObjInstance();
         instance->type = OBJ_INSTANCE;
+        instance->isMarked = false;
+        instance->next = vm->objects;
+        vm->objects = instance;
         instance->klass = klass;
         instance->fields = new Table();
-        instance->next = nullptr;
         return instance;
     }
 
-    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjClosure* method) {
+    ObjBoundMethod* allocateBoundMethod(VM* vm, Value receiver, ObjClosure* method) {
         ObjBoundMethod* bound = new ObjBoundMethod();
         bound->type = OBJ_BOUND_METHOD;
+        bound->isMarked = false;
+        bound->next = vm->objects;
+        vm->objects = bound;
         bound->receiver = receiver;
         bound->method = method;
-        bound->next = nullptr;
         return bound;
+    }
+
+    void freeObject(Obj* obj) {
+        switch (obj->type) {
+            case OBJ_STRING: {
+                ObjString* string = (ObjString*)obj;
+                delete string;
+                break;
+            }
+            case OBJ_NATIVE: {
+                delete (ObjNative*)obj;
+                break;
+            }
+            case OBJ_FUNCTION: {
+                ObjFunction* function = (ObjFunction*)obj;
+                delete function;
+                break;
+            }
+            case OBJ_CLOSURE: {
+                ObjClosure* closure = (ObjClosure*)obj;
+                delete[] closure->upvalues;
+                delete closure;
+                break;
+            }
+            case OBJ_UPVALUE: {
+                delete (ObjUpvalue*)obj;
+                break;
+            }
+            case OBJ_CLASS: {
+                ObjClass* klass = (ObjClass*)obj;
+                delete klass->methods;
+                delete klass;
+                break;
+            }
+            case OBJ_INSTANCE: {
+                ObjInstance* instance = (ObjInstance*)obj;
+                delete instance->fields;
+                delete instance;
+                break;
+            }
+            case OBJ_BOUND_METHOD: {
+                delete (ObjBoundMethod*)obj;
+                break;
+            }
+        }
     }
 
     void printObject(Value value) {

@@ -11,7 +11,7 @@ void test_arithmetic() {
     VM vm;
     vm.init();
 
-    ObjFunction* function = allocateFunction();
+    ObjFunction* function = allocateFunction(&vm);
     Chunk* chunk = &function->chunk;
 
     int c1 = chunk->addConstant(NUMBER_VAL(1.2));
@@ -36,7 +36,7 @@ void test_negate() {
     VM vm;
     vm.init();
 
-    ObjFunction* function = allocateFunction();
+    ObjFunction* function = allocateFunction(&vm);
     Chunk* chunk = &function->chunk;
     int c1 = chunk->addConstant(NUMBER_VAL(5));
 

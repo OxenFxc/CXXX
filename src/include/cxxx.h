@@ -69,7 +69,8 @@ namespace cxxx {
     };
 
     // Native function pointer type
-    typedef Value (*NativeFn)(int argCount, Value* args);
+    // We pass void* vm to allow native functions to allocate objects.
+    typedef Value (*NativeFn)(void* vm, int argCount, Value* args);
 
     class CXXX {
     public:

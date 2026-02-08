@@ -1,6 +1,7 @@
 #include "compiler.h"
 #include "scanner.h"
 #include "../vm/object.h"
+#include "../vm/vm.h"
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
@@ -86,7 +87,7 @@ namespace cxxx {
 
     struct CompilerInstance {
         Scanner* scanner;
-        Table* internTable;
+        VM* vm;
         Parser parser;
         Compiler* compiler;
         ClassCompiler* currentClass;
@@ -188,8 +189,8 @@ namespace cxxx {
         emitByte(compiler, OP_RETURN);
     }
 
-    uint8_t identifierConstant(CompilerInstance* compiler, Token* name, Table* internTable) {
-        ObjString* string = copyString(name->start, name->length, internTable);
+    uint8_t identifierConstant(CompilerInstance* compiler, Token* name) {
+        ObjString* string = copyString(compiler->vm, name->start, name->length);
         return makeConstant(compiler, OBJ_VAL((Obj*)string));
     }
 
@@ -208,8 +209,6 @@ namespace cxxx {
         local->name = name;
         local->depth = -1;
         local->isCaptured = false;
-        // std::string n(name.start, name.length);
-        // std::cout << "DEBUG: Added local '" << n << "' at index " << compiler->compiler->localCount - 1 << std::endl;
     }
 
     void declareVariable(CompilerInstance* compiler) {
@@ -237,11 +236,10 @@ namespace cxxx {
         declareVariable(compiler);
         if (compiler->compiler->scopeDepth > 0) {
             isLocal = true;
-            return; // 0;
+            return;
         }
 
         isLocal = false;
-        // return identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
     }
 
     void markInitialized(CompilerInstance* compiler) {
@@ -300,7 +298,6 @@ namespace cxxx {
         return -1;
     }
 
-    // Forward declarations
     void expression(CompilerInstance* compiler);
     void parsePrecedence(CompilerInstance* compiler, Precedence precedence);
     void variable(CompilerInstance* compiler, bool canAssign);
@@ -337,7 +334,7 @@ namespace cxxx {
             getOp = OP_GET_UPVALUE;
             setOp = OP_SET_UPVALUE;
         } else {
-            arg = identifierConstant(compiler, &name, compiler->internTable);
+            arg = identifierConstant(compiler, &name);
             getOp = OP_GET_GLOBAL;
             setOp = OP_SET_GLOBAL;
         }
@@ -390,7 +387,7 @@ namespace cxxx {
 
     void dot(CompilerInstance* compiler, bool canAssign) {
         consume(compiler, TOKEN_IDENTIFIER, "Expect property name.");
-        uint8_t name = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+        uint8_t name = identifierConstant(compiler, &compiler->parser.previous);
 
         if (canAssign && match(compiler, TOKEN_EQUAL)) {
             expression(compiler);
@@ -421,7 +418,7 @@ namespace cxxx {
 
         consume(compiler, TOKEN_DOT, "Expect '.' after 'super'.");
         consume(compiler, TOKEN_IDENTIFIER, "Expect superclass method name.");
-        uint8_t name = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+        uint8_t name = identifierConstant(compiler, &compiler->parser.previous);
 
         namedVariable(compiler, syntheticToken("this"), false);
         if (match(compiler, TOKEN_LEFT_PAREN)) {
@@ -452,7 +449,7 @@ namespace cxxx {
             case TOKEN_STAR:          emitByte(compiler, OP_MULTIPLY); break;
             case TOKEN_SLASH:         emitByte(compiler, OP_DIVIDE); break;
             case TOKEN_INSTANCEOF:    emitByte(compiler, OP_INSTANCEOF); break;
-            default: return; // Unreachable.
+            default: return;
         }
     }
 
@@ -470,12 +467,11 @@ namespace cxxx {
             getOp = OP_GET_UPVALUE;
             setOp = OP_SET_UPVALUE;
         } else {
-            arg = identifierConstant(compiler, &name, compiler->internTable);
+            arg = identifierConstant(compiler, &name);
             getOp = OP_GET_GLOBAL;
             setOp = OP_SET_GLOBAL;
         }
 
-        // ++i
         emitBytes(compiler, getOp, (uint8_t)arg);
         emitConstant(compiler, NUMBER_VAL(1));
         if (operatorType == TOKEN_PLUS_PLUS) {
@@ -487,7 +483,6 @@ namespace cxxx {
     }
 
     void ternary(CompilerInstance* compiler, bool canAssign) {
-        // Condition on stack.
         int thenJump = emitJump(compiler, OP_JUMP_IF_FALSE);
         emitByte(compiler, OP_POP);
 
@@ -520,31 +515,24 @@ namespace cxxx {
             case TOKEN_FALSE: emitConstant(compiler, BOOL_VAL(false)); break;
             case TOKEN_NIL:   emitConstant(compiler, NIL_VAL()); break;
             case TOKEN_TRUE:  emitConstant(compiler, BOOL_VAL(true)); break;
-            default: return; // Unreachable.
+            default: return;
         }
     }
 
     void unary(CompilerInstance* compiler, bool canAssign) {
         TokenType operatorType = compiler->parser.previous.type;
-
-        // Compile the operand.
         parsePrecedence(compiler, PREC_UNARY);
-
-        // Emit the operator instruction.
         switch (operatorType) {
             case TOKEN_BANG:  emitByte(compiler, OP_NOT); break;
             case TOKEN_MINUS: emitByte(compiler, OP_NEGATE); break;
-            default: return; // Unreachable.
+            default: return;
         }
     }
 
-    // Forward declare call
-    void call(CompilerInstance* compiler, bool canAssign);
-
     void string_literal(CompilerInstance* compiler, bool canAssign) {
-        emitConstant(compiler, OBJ_VAL((Obj*)copyString(compiler->parser.previous.start + 1,
-                                                        compiler->parser.previous.length - 2,
-                                                        compiler->internTable)));
+        emitConstant(compiler, OBJ_VAL((Obj*)copyString(compiler->vm,
+                                                        compiler->parser.previous.start + 1,
+                                                        compiler->parser.previous.length - 2)));
     }
 
     ParseRule rules[] = {
@@ -640,7 +628,7 @@ namespace cxxx {
         declareVariable(compiler);
         if (compiler->compiler->scopeDepth > 0 || compiler->compiler->type != TYPE_SCRIPT) return 0;
 
-        return identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+        return identifierConstant(compiler, &compiler->parser.previous);
     }
 
     void defineVariable(CompilerInstance* compiler, uint8_t global) {
@@ -685,22 +673,17 @@ namespace cxxx {
 
     void emitLoop(CompilerInstance* compiler, int loopStart) {
         emitByte(compiler, OP_LOOP);
-
         int offset = currentChunk(compiler)->code.size() - loopStart + 2;
         if (offset > UINT16_MAX) error(compiler, "Loop body too large.");
-
         emitByte(compiler, (offset >> 8) & 0xff);
         emitByte(compiler, offset & 0xff);
     }
 
     void patchJump(CompilerInstance* compiler, int offset) {
-        // -2 to adjust for the bytecode for the jump offset itself.
         int jump = currentChunk(compiler)->code.size() - offset - 2;
-
         if (jump > UINT16_MAX) {
             error(compiler, "Too much code to jump over.");
         }
-
         currentChunk(compiler)->code[offset] = (jump >> 8) & 0xff;
         currentChunk(compiler)->code[offset + 1] = jump & 0xff;
     }
@@ -736,7 +719,7 @@ namespace cxxx {
         consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after block.");
     }
 
-    void statement(CompilerInstance* compiler); // Forward declaration
+    void statement(CompilerInstance* compiler);
 
     void beginLoop(CompilerInstance* compiler, Loop* loop) {
         loop->enclosing = compiler->compiler->loop;
@@ -748,11 +731,9 @@ namespace cxxx {
 
     void endLoop(CompilerInstance* compiler) {
         if (compiler->compiler->loop == nullptr) return;
-
         for (int jump : compiler->compiler->loop->breakJumps) {
             patchJump(compiler, jump);
         }
-
         compiler->compiler->loop = compiler->compiler->loop->enclosing;
     }
 
@@ -761,7 +742,6 @@ namespace cxxx {
             error(compiler, "Can't use 'break' outside of a loop or switch.");
         }
         consume(compiler, TOKEN_SEMICOLON, "Expect ';' after 'break'.");
-
         if (compiler->compiler->loop == nullptr) return;
 
         for (int i = compiler->compiler->localCount - 1;
@@ -773,7 +753,6 @@ namespace cxxx {
                  emitByte(compiler, OP_POP);
              }
         }
-
         compiler->compiler->loop->breakJumps.push_back(emitJump(compiler, OP_JUMP));
     }
 
@@ -782,12 +761,10 @@ namespace cxxx {
         while (loop != nullptr && !loop->isLoop) {
             loop = loop->enclosing;
         }
-
         if (loop == nullptr) {
             error(compiler, "Can't use 'continue' outside of a loop.");
         }
         consume(compiler, TOKEN_SEMICOLON, "Expect ';' after 'continue'.");
-
         for (int i = compiler->compiler->localCount - 1;
              i >= 0 && compiler->compiler->locals[i].depth > loop->scopeDepth;
              i--) {
@@ -797,18 +774,15 @@ namespace cxxx {
                  emitByte(compiler, OP_POP);
              }
         }
-
         emitLoop(compiler, loop->start);
     }
 
     void switchStatement(CompilerInstance* compiler) {
         consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'switch'.");
-
         beginScope(compiler);
         expression(compiler);
         addLocal(compiler, syntheticToken(" switch_temp "));
         markInitialized(compiler);
-
         consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after switch value.");
         consume(compiler, TOKEN_LEFT_BRACE, "Expect '{' before switch cases.");
 
@@ -822,45 +796,31 @@ namespace cxxx {
         while (!check(compiler, TOKEN_RIGHT_BRACE) && !check(compiler, TOKEN_EOF)) {
             if (match(compiler, TOKEN_CASE) || match(compiler, TOKEN_DEFAULT)) {
                 TokenType type = compiler->parser.previous.type;
-
                 if (previousCaseSkip != -1) {
-                    // Implicit break from previous case
                     int jumpToEnd = emitJump(compiler, OP_JUMP);
                     switchLoop.breakJumps.push_back(jumpToEnd);
-
                     patchJump(compiler, previousCaseSkip);
-                    emitByte(compiler, OP_POP); // Pop boolean result of previous condition (wait, NO)
-                    // Wait, previousCaseSkip jumps over BODY.
-                    // The stack before jump is [bool] (result of equal).
-                    // So at previousCaseSkip target, stack has [bool].
-                    // So we must pop it.
+                    emitByte(compiler, OP_POP);
                 }
-
                 if (type == TOKEN_CASE) {
                     emitBytes(compiler, OP_GET_LOCAL, (uint8_t)(compiler->compiler->localCount - 1));
                     expression(compiler);
                     consume(compiler, TOKEN_COLON, "Expect ':' after case value.");
                     emitByte(compiler, OP_EQUAL);
                     previousCaseSkip = emitJump(compiler, OP_JUMP_IF_FALSE);
-                    emitByte(compiler, OP_POP); // Pop true result
+                    emitByte(compiler, OP_POP);
                 } else {
                     consume(compiler, TOKEN_COLON, "Expect ':' after default.");
                     previousCaseSkip = -1;
                 }
             } else {
-                if (previousCaseSkip != -1) {
-                    // error(compiler, "Statements must follow a case or default.");
-                    // Actually, statements are fine.
-                }
                 statement(compiler);
             }
         }
-
         if (previousCaseSkip != -1) {
              patchJump(compiler, previousCaseSkip);
-             emitByte(compiler, OP_POP); // Pop boolean result
+             emitByte(compiler, OP_POP);
         }
-
         consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after switch cases.");
         endLoop(compiler);
         endScope(compiler);
@@ -868,23 +828,18 @@ namespace cxxx {
 
     void whileStatement(CompilerInstance* compiler) {
         int loopStart = currentChunk(compiler)->code.size();
-
         Loop loop;
         beginLoop(compiler, &loop);
         loop.start = loopStart;
-
         consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
         expression(compiler);
         consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
-
         int exitJump = emitJump(compiler, OP_JUMP_IF_FALSE);
         emitByte(compiler, OP_POP);
         statement(compiler);
         emitLoop(compiler, loopStart);
-
         patchJump(compiler, exitJump);
         emitByte(compiler, OP_POP);
-
         endLoop(compiler);
     }
 
@@ -898,44 +853,34 @@ namespace cxxx {
         } else {
             expressionStatement(compiler);
         }
-
         int loopStart = currentChunk(compiler)->code.size();
-
         Loop loop;
         beginLoop(compiler, &loop);
         loop.start = loopStart;
-
         int exitJump = -1;
         if (!match(compiler, TOKEN_SEMICOLON)) {
             expression(compiler);
             consume(compiler, TOKEN_SEMICOLON, "Expect ';' after loop condition.");
-
-            // Jump out of the loop if the condition is false.
             exitJump = emitJump(compiler, OP_JUMP_IF_FALSE);
-            emitByte(compiler, OP_POP); // Condition.
+            emitByte(compiler, OP_POP);
         }
-
         if (!match(compiler, TOKEN_RIGHT_PAREN)) {
             int bodyJump = emitJump(compiler, OP_JUMP);
             int incrementStart = currentChunk(compiler)->code.size();
             expression(compiler);
             emitByte(compiler, OP_POP);
             consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
-
             emitLoop(compiler, loopStart);
             loopStart = incrementStart;
             loop.start = loopStart;
             patchJump(compiler, bodyJump);
         }
-
         statement(compiler);
         emitLoop(compiler, loopStart);
-
         if (exitJump != -1) {
             patchJump(compiler, exitJump);
-            emitByte(compiler, OP_POP); // Condition.
+            emitByte(compiler, OP_POP);
         }
-
         endLoop(compiler);
         endScope(compiler);
     }
@@ -944,16 +889,12 @@ namespace cxxx {
         consume(compiler, TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
         expression(compiler);
         consume(compiler, TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
-
         int thenJump = emitJump(compiler, OP_JUMP_IF_FALSE);
         emitByte(compiler, OP_POP);
         statement(compiler);
-
         int elseJump = emitJump(compiler, OP_JUMP);
-
         patchJump(compiler, thenJump);
         emitByte(compiler, OP_POP);
-
         if (match(compiler, TOKEN_ELSE)) {
             statement(compiler);
         }
@@ -964,7 +905,6 @@ namespace cxxx {
         if (compiler->compiler->type == TYPE_SCRIPT) {
             error(compiler, "Can't return from top-level code.");
         }
-
         if (match(compiler, TOKEN_SEMICOLON)) {
             emitReturn(compiler);
         } else {
@@ -1003,7 +943,7 @@ namespace cxxx {
     void function(CompilerInstance* compilerInstance, FunctionType type) {
         Compiler compiler;
         compiler.enclosing = compilerInstance->compiler;
-        compiler.function = allocateFunction();
+        compiler.function = allocateFunction(compilerInstance->vm);
         compiler.type = type;
         compiler.localCount = 0;
         compiler.upvalueCount = 0;
@@ -1012,7 +952,9 @@ namespace cxxx {
         compilerInstance->compiler = &compiler;
 
         if (type != TYPE_SCRIPT) {
-            compiler.function->name = copyString(compilerInstance->parser.previous.start, compilerInstance->parser.previous.length, compilerInstance->internTable);
+            compiler.function->name = copyString(compilerInstance->vm,
+                compilerInstance->parser.previous.start,
+                compilerInstance->parser.previous.length);
         }
 
         Local* local = &compiler.locals[compiler.localCount++];
@@ -1056,7 +998,7 @@ namespace cxxx {
 
     void method(CompilerInstance* compiler) {
         consume(compiler, TOKEN_IDENTIFIER, "Expect method name.");
-        uint8_t constant = identifierConstant(compiler, &compiler->parser.previous, compiler->internTable);
+        uint8_t constant = identifierConstant(compiler, &compiler->parser.previous);
 
         FunctionType type = TYPE_METHOD;
         if (compiler->parser.previous.length == 4 && memcmp(compiler->parser.previous.start, "init", 4) == 0) {
@@ -1069,7 +1011,7 @@ namespace cxxx {
     void classDeclaration(CompilerInstance* compiler) {
         consume(compiler, TOKEN_IDENTIFIER, "Expect class name.");
         Token className = compiler->parser.previous;
-        uint8_t nameConstant = identifierConstant(compiler, &className, compiler->internTable);
+        uint8_t nameConstant = identifierConstant(compiler, &className);
         declareVariable(compiler);
 
         emitBytes(compiler, OP_CLASS, nameConstant);
@@ -1083,15 +1025,12 @@ namespace cxxx {
         if (match(compiler, TOKEN_LESS)) {
             consume(compiler, TOKEN_IDENTIFIER, "Expect superclass name.");
             variable(compiler, false);
-
             if (identifiersEqual(&className, &compiler->parser.previous)) {
                 error(compiler, "A class can't inherit from itself.");
             }
-
             beginScope(compiler);
             addLocal(compiler, syntheticToken("super"));
             defineVariable(compiler, 0);
-
             namedVariable(compiler, className, false);
             emitByte(compiler, OP_INHERIT);
             classCompiler.hasSuperclass = true;
@@ -1104,11 +1043,9 @@ namespace cxxx {
         }
         consume(compiler, TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
         emitByte(compiler, OP_POP);
-
         if (classCompiler.hasSuperclass) {
             endScope(compiler);
         }
-
         compiler->currentClass = compiler->currentClass->enclosing;
     }
 
@@ -1131,7 +1068,6 @@ namespace cxxx {
         }
 
         if (compiler->parser.panicMode) {
-             // synchronize
              compiler->parser.panicMode = false;
              while (compiler->parser.current.type != TOKEN_EOF) {
                  if (compiler->parser.previous.type == TOKEN_SEMICOLON) return;
@@ -1146,24 +1082,24 @@ namespace cxxx {
                      case TOKEN_RETURN:
                          return;
                      default:
-                         ; // Do nothing.
+                         ;
                  }
                  advance(compiler);
              }
         }
     }
 
-    ObjFunction* compile(const std::string& source, Table* internTable) {
+    ObjFunction* compile(VM* vm, const std::string& source) {
         Scanner scanner(source.c_str());
         CompilerInstance compilerInstance;
         compilerInstance.scanner = &scanner;
-        compilerInstance.internTable = internTable;
+        compilerInstance.vm = vm;
         compilerInstance.parser.hadError = false;
         compilerInstance.parser.panicMode = false;
 
         Compiler compiler;
         compiler.enclosing = nullptr;
-        compiler.function = allocateFunction();
+        compiler.function = allocateFunction(vm);
         compiler.type = TYPE_SCRIPT;
         compiler.localCount = 0;
         compiler.upvalueCount = 0;

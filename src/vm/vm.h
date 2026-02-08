@@ -5,11 +5,19 @@
 #include "chunk.h"
 #include "value.h"
 #include "table.h"
+#include "object.h"
 #include "../include/cxxx.h" // For InterpretResult
 
 namespace cxxx {
 
-    #define STACK_MAX 256
+    #define FRAMES_MAX 64
+    #define STACK_MAX (FRAMES_MAX * 256)
+
+    struct CallFrame {
+        ObjFunction* function;
+        uint8_t* ip;
+        Value* slots;
+    };
 
     class VM {
     public:
@@ -19,7 +27,7 @@ namespace cxxx {
         void init();
         void free();
 
-        InterpretResult interpret(Chunk* chunk);
+        InterpretResult interpret(ObjFunction* function);
 
         // Stack operations
         void push(Value value);
@@ -31,8 +39,9 @@ namespace cxxx {
         Table strings;
 
     private:
-        Chunk* chunk;
-        uint8_t* ip;
+        CallFrame frames[FRAMES_MAX];
+        int frameCount;
+
         Value stack[STACK_MAX];
         Value* stackTop;
 

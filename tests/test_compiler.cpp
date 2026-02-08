@@ -12,7 +12,6 @@ using namespace cxxx;
 
 int main() {
     std::string source = "var result = -1.2 + 3.4 * 5;";
-    Chunk chunk;
     std::cout << "Compiling: " << source << std::endl;
 
     // We need to pass a table for interning if we want consistency,
@@ -36,12 +35,12 @@ int main() {
     std::cout << "vm.strings address: " << &vm.strings << std::endl;
     std::cout << "vm.globals address: " << &vm.globals << std::endl;
 
-    // Passing &vm.strings now that I fixed the segfault in compiler.cpp
-    if (compile(source, &chunk, &vm.strings)) {
+    ObjFunction* function = compile(source, &vm.strings);
+    if (function != nullptr) {
         std::cout << "Compilation successful." << std::endl;
-        chunk.disassemble("Compiled Chunk");
+        function->chunk.disassemble("Compiled Chunk");
 
-        vm.interpret(&chunk);
+        vm.interpret(function);
 
         // Check global 'result'
         ObjString* name = copyString("result", 6, &vm.strings);

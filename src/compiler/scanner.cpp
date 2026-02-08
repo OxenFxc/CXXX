@@ -173,12 +173,14 @@ namespace cxxx {
             case '{': return makeToken(TOKEN_LEFT_BRACE);
             case '}': return makeToken(TOKEN_RIGHT_BRACE);
             case ';': return makeToken(TOKEN_SEMICOLON);
+            case ':': return makeToken(TOKEN_COLON);
             case ',': return makeToken(TOKEN_COMMA);
             case '.': return makeToken(TOKEN_DOT);
-            case '-': return makeToken(TOKEN_MINUS);
-            case '+': return makeToken(TOKEN_PLUS);
-            case '/': return makeToken(TOKEN_SLASH);
-            case '*': return makeToken(TOKEN_STAR);
+            case '-': return makeToken(match('=') ? TOKEN_MINUS_EQUAL : (match('-') ? TOKEN_MINUS_MINUS : TOKEN_MINUS));
+            case '+': return makeToken(match('=') ? TOKEN_PLUS_EQUAL : (match('+') ? TOKEN_PLUS_PLUS : TOKEN_PLUS));
+            case '/': return makeToken(match('=') ? TOKEN_SLASH_EQUAL : TOKEN_SLASH);
+            case '*': return makeToken(match('=') ? TOKEN_STAR_EQUAL : TOKEN_STAR);
+            case '?': return makeToken(TOKEN_QUESTION);
             case '!': return makeToken(match('=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
             case '=': return makeToken(match('=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL);
             case '<': return makeToken(match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);

@@ -9,6 +9,8 @@ set(TEST_SOURCES
     test_vm_ops.cpp
     test_comparison.cpp
     test_control_flow.cpp
+    test_sugar.cpp
+    test_functions.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

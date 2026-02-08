@@ -85,6 +85,12 @@ namespace cxxx {
                     std::cout << std::left << std::setw(16) << "OP_JUMP_IF_FALSE" << offset << " -> " << offset + 3 + jump << std::endl;
                     return offset + 3;
                 }
+            case OP_LOOP:
+                {
+                    uint16_t jump = (uint16_t)((code[offset + 1] << 8) | code[offset + 2]);
+                    std::cout << std::left << std::setw(16) << "OP_LOOP" << offset << " -> " << offset + 3 - jump << std::endl;
+                    return offset + 3;
+                }
             case OP_POP:
                 std::cout << "OP_POP" << std::endl;
                 return offset + 1;

@@ -29,14 +29,16 @@ int main() {
     std::cout << "Stack tests passed." << std::endl;
 
     // Minimal Run Test
-    Chunk chunk;
-    int constant = chunk.addConstant(NUMBER_VAL(42));
-    chunk.write(OP_CONSTANT, 123);
-    chunk.write(constant, 123);
-    chunk.write(OP_RETURN, 123);
+    ObjFunction* function = allocateFunction();
+    Chunk* chunk = &function->chunk;
+
+    int constant = chunk->addConstant(NUMBER_VAL(42));
+    chunk->write(OP_CONSTANT, 123);
+    chunk->write(constant, 123);
+    chunk->write(OP_RETURN, 123);
 
     // interpret calls run()
-    InterpretResult result = vm.interpret(&chunk);
+    InterpretResult result = vm.interpret(function);
     if (result == InterpretResult::OK) {
         std::cout << "VM Run Test Passed." << std::endl;
     } else {

@@ -5,8 +5,7 @@ namespace cxxx {
 
     VM::VM() : globals(), strings() {
         resetStack();
-        chunk = nullptr;
-        ip = nullptr;
+        frameCount = 0;
     }
 
     VM::~VM() {
@@ -15,8 +14,7 @@ namespace cxxx {
 
     void VM::init() {
         resetStack();
-        chunk = nullptr;
-        ip = nullptr;
+        frameCount = 0;
     }
 
     void VM::free() {
@@ -25,6 +23,7 @@ namespace cxxx {
 
     void VM::resetStack() {
         stackTop = stack;
+        frameCount = 0;
     }
 
     void VM::push(Value value) {
@@ -50,9 +49,13 @@ namespace cxxx {
         return stackTop == stack;
     }
 
-    InterpretResult VM::interpret(Chunk* chunk) {
-        this->chunk = chunk;
-        this->ip = chunk->code.data();
+    InterpretResult VM::interpret(ObjFunction* function) {
+        push(OBJ_VAL((Obj*)function));
+        CallFrame* frame = &frames[frameCount++];
+        frame->function = function;
+        frame->ip = function->chunk.code.data();
+        frame->slots = stack;
+
         return run();
     }
 
@@ -61,14 +64,10 @@ namespace cxxx {
     }
 
     InterpretResult VM::run() {
-        // Simple placeholder for step 3
-        // In next step, I will add the loop.
-        // For now, I can assume it returns OK.
-        // But to test stack, I might need it to do something.
-        // Let's implement OP_RETURN at least.
+        CallFrame* frame = &frames[frameCount - 1];
 
-        #define READ_BYTE() (*ip++)
-        #define READ_CONSTANT() (chunk->constants[READ_BYTE()])
+        #define READ_BYTE() (*frame->ip++)
+        #define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
         #define READ_STRING() ((ObjString*)READ_CONSTANT().as.obj)
 
         for (;;) {
@@ -80,7 +79,7 @@ namespace cxxx {
                     std::cout << " ]";
                 }
                 std::cout << std::endl;
-                chunk->disassembleInstruction((int)(ip - chunk->code.data()));
+                frame->function->chunk.disassembleInstruction((int)(frame->ip - frame->function->chunk.code.data()));
             #endif
 
             uint8_t instruction;
@@ -139,15 +138,31 @@ namespace cxxx {
                 case OP_JUMP: {
                     uint16_t offset = (uint16_t)(READ_BYTE() << 8);
                     offset |= READ_BYTE();
-                    ip += offset;
+                    frame->ip += offset;
                     break;
                 }
                 case OP_JUMP_IF_FALSE: {
                     uint16_t offset = (uint16_t)(READ_BYTE() << 8);
                     offset |= READ_BYTE();
                     if (isFalsey(peek(0))) {
-                        ip += offset;
+                        frame->ip += offset;
                     }
+                    break;
+                }
+                case OP_GET_LOCAL: {
+                    uint8_t slot = READ_BYTE();
+                    push(frame->slots[slot]);
+                    break;
+                }
+                case OP_SET_LOCAL: {
+                    uint8_t slot = READ_BYTE();
+                    frame->slots[slot] = peek(0);
+                    break;
+                }
+                case OP_LOOP: {
+                    uint16_t offset = (uint16_t)(READ_BYTE() << 8);
+                    offset |= READ_BYTE();
+                    frame->ip -= offset;
                     break;
                 }
                 case OP_POP: {
@@ -156,7 +171,7 @@ namespace cxxx {
                 }
                 case OP_DEFINE_GLOBAL: {
                     ObjString* name = READ_STRING();
-                    std::cout << "VM: Defining global " << name->str << std::endl;
+                    // std::cout << "VM: Defining global " << name->str << std::endl;
                     globals.set(name, peek(0));
                     pop();
                     break;
@@ -184,15 +199,32 @@ namespace cxxx {
                 case OP_CALL: {
                     int argCount = READ_BYTE();
                     Value callee = peek(argCount);
-                    if (!isObjType(callee, OBJ_NATIVE)) {
-                        std::cerr << "Can only call native functions." << std::endl;
-                        return InterpretResult::RUNTIME_ERROR;
+                    if (isObjType(callee, OBJ_FUNCTION)) {
+                        ObjFunction* function = (ObjFunction*)callee.as.obj;
+                        if (argCount != function->arity) {
+                            std::cerr << "Expected " << function->arity << " arguments but got " << argCount << "." << std::endl;
+                            return InterpretResult::RUNTIME_ERROR;
+                        }
+                        if (frameCount == FRAMES_MAX) {
+                            std::cerr << "Stack overflow." << std::endl;
+                            return InterpretResult::RUNTIME_ERROR;
+                        }
+                        CallFrame* newFrame = &frames[frameCount++];
+                        newFrame->function = function;
+                        newFrame->ip = function->chunk.code.data();
+                        newFrame->slots = stackTop - argCount - 1;
+                        frame = newFrame; // Switch to new frame
+                        break;
                     }
-                    NativeFn native = ((ObjNative*)callee.as.obj)->function;
-                    Value result = native(argCount, stackTop - argCount);
-                    stackTop -= argCount + 1; // Pop args and callee
-                    push(result);
-                    break;
+                    if (isObjType(callee, OBJ_NATIVE)) {
+                        NativeFn native = ((ObjNative*)callee.as.obj)->function;
+                        Value result = native(argCount, stackTop - argCount);
+                        stackTop -= argCount + 1; // Pop args and callee
+                        push(result);
+                        break;
+                    }
+                    std::cerr << "Can only call functions and classes." << std::endl;
+                    return InterpretResult::RUNTIME_ERROR;
                 }
                 case OP_PRINT: {
                     printValue(pop());
@@ -206,10 +238,19 @@ namespace cxxx {
                     break;
                 }
                 case OP_RETURN: {
-                    // For now, pop result.
-                    // printValue(pop());
-                    // std::cout << std::endl;
-                    return InterpretResult::OK;
+                    Value result = pop();
+                    frameCount--;
+                    if (frameCount == 0) {
+                        pop(); // Pop main script function
+                        // Keep result on stack for API/Test access
+                        push(result);
+                        return InterpretResult::OK;
+                    }
+
+                    stackTop = frame->slots; // Discard locals
+                    push(result);
+                    frame = &frames[frameCount - 1]; // Restore caller frame
+                    break;
                 }
                 default:
                     return InterpretResult::RUNTIME_ERROR;
@@ -218,6 +259,7 @@ namespace cxxx {
 
         #undef READ_BYTE
         #undef READ_CONSTANT
+        #undef READ_STRING
     }
 
 }

@@ -1,4 +1,5 @@
 #include "chunk.h"
+#include "object.h"
 #include <iostream>
 #include <iomanip>
 
@@ -126,6 +127,38 @@ namespace cxxx {
                 }
             case OP_PRINT:
                 std::cout << "OP_PRINT" << std::endl;
+                return offset + 1;
+            case OP_CLOSURE:
+                {
+                    offset++;
+                    uint8_t constant = code[offset++];
+                    std::cout << std::left << std::setw(16) << "OP_CLOSURE" << (int)constant << " ";
+                    printValue(constants[constant]);
+                    std::cout << std::endl;
+
+                    ObjFunction* function = (ObjFunction*)constants[constant].as.obj;
+                    for (int i = 0; i < function->upvalueCount; i++) {
+                        int isLocal = code[offset++];
+                        int index = code[offset++];
+                        std::cout << std::setw(4) << std::setfill('0') << offset - 2 << "    |                     "
+                                  << (isLocal ? "local" : "upvalue") << " " << index << std::endl;
+                    }
+                    return offset;
+                }
+            case OP_GET_UPVALUE:
+                {
+                    uint8_t slot = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_GET_UPVALUE" << (int)slot << std::endl;
+                    return offset + 2;
+                }
+            case OP_SET_UPVALUE:
+                {
+                    uint8_t slot = code[offset + 1];
+                    std::cout << std::left << std::setw(16) << "OP_SET_UPVALUE" << (int)slot << std::endl;
+                    return offset + 2;
+                }
+            case OP_CLOSE_UPVALUE:
+                std::cout << "OP_CLOSE_UPVALUE" << std::endl;
                 return offset + 1;
             default:
                 std::cout << "Unknown opcode " << (int)instruction << std::endl;

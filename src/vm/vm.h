@@ -14,7 +14,7 @@ namespace cxxx {
     #define STACK_MAX (FRAMES_MAX * 256)
 
     struct CallFrame {
-        ObjFunction* function;
+        ObjClosure* closure;
         uint8_t* ip;
         Value* slots;
     };
@@ -44,10 +44,13 @@ namespace cxxx {
 
         Value stack[STACK_MAX];
         Value* stackTop;
+        ObjUpvalue* openUpvalues;
 
         InterpretResult run();
 
         void resetStack();
+        ObjUpvalue* captureUpvalue(Value* local);
+        void closeUpvalues(Value* last);
         void defineMethod(ObjString* name);
         bool bindMethod(ObjClass* klass, ObjString* name);
         bool callValue(Value callee, int argCount);

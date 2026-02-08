@@ -64,8 +64,31 @@ namespace cxxx {
         function->type = OBJ_FUNCTION;
         function->next = nullptr;
         function->arity = 0;
+        function->upvalueCount = 0;
         function->name = nullptr;
         return function;
+    }
+
+    ObjUpvalue* allocateUpvalue(Value* slot) {
+        ObjUpvalue* upvalue = new ObjUpvalue();
+        upvalue->type = OBJ_UPVALUE;
+        upvalue->location = slot;
+        upvalue->next = nullptr;
+        upvalue->closed = NIL_VAL();
+        return upvalue;
+    }
+
+    ObjClosure* allocateClosure(ObjFunction* function) {
+        ObjClosure* closure = new ObjClosure();
+        closure->type = OBJ_CLOSURE;
+        closure->function = function;
+        closure->upvalues = new ObjUpvalue*[function->upvalueCount];
+        closure->upvalueCount = function->upvalueCount;
+        for (int i = 0; i < function->upvalueCount; i++) {
+            closure->upvalues[i] = nullptr;
+        }
+        closure->next = nullptr;
+        return closure;
     }
 
     ObjClass* allocateClass(ObjString* name) {
@@ -87,7 +110,7 @@ namespace cxxx {
         return instance;
     }
 
-    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjFunction* method) {
+    ObjBoundMethod* allocateBoundMethod(Value receiver, ObjClosure* method) {
         ObjBoundMethod* bound = new ObjBoundMethod();
         bound->type = OBJ_BOUND_METHOD;
         bound->receiver = receiver;
@@ -111,6 +134,16 @@ namespace cxxx {
                     std::cout << "<fn " << ((ObjFunction*)value.as.obj)->name->str << ">";
                 }
                 break;
+            case OBJ_CLOSURE:
+                if (((ObjClosure*)value.as.obj)->function->name == nullptr) {
+                    std::cout << "<script>";
+                } else {
+                    std::cout << "<fn " << ((ObjClosure*)value.as.obj)->function->name->str << ">";
+                }
+                break;
+            case OBJ_UPVALUE:
+                std::cout << "upvalue";
+                break;
             case OBJ_CLASS:
                 std::cout << ((ObjClass*)value.as.obj)->name->str;
                 break;
@@ -118,7 +151,11 @@ namespace cxxx {
                 std::cout << ((ObjInstance*)value.as.obj)->klass->name->str << " instance";
                 break;
             case OBJ_BOUND_METHOD:
-                std::cout << "<fn " << ((ObjBoundMethod*)value.as.obj)->method->name->str << ">";
+                if (((ObjBoundMethod*)value.as.obj)->method->function->name == nullptr) {
+                    std::cout << "<script>";
+                } else {
+                    std::cout << "<fn " << ((ObjBoundMethod*)value.as.obj)->method->function->name->str << ">";
+                }
                 break;
         }
     }

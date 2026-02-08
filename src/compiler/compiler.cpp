@@ -43,6 +43,12 @@ namespace cxxx {
     struct Local {
         Token name;
         int depth;
+        bool isCaptured;
+    };
+
+    struct Upvalue {
+        uint8_t index;
+        bool isLocal;
     };
 
     enum FunctionType {
@@ -59,6 +65,8 @@ namespace cxxx {
 
         Local locals[256];
         int localCount;
+        Upvalue upvalues[256];
+        int upvalueCount;
         int scopeDepth;
     };
 
@@ -190,6 +198,7 @@ namespace cxxx {
         Local* local = &compiler->compiler->locals[compiler->compiler->localCount++];
         local->name = name;
         local->depth = -1;
+        local->isCaptured = false;
         // std::string n(name.start, name.length);
         // std::cout << "DEBUG: Added local '" << n << "' at index " << compiler->compiler->localCount - 1 << std::endl;
     }
@@ -232,22 +241,53 @@ namespace cxxx {
             compiler->compiler->scopeDepth;
     }
 
-    int resolveLocal(CompilerInstance* compiler, Token* name) {
-        // std::string n(name->start, name->length);
-        // std::cout << "DEBUG: Resolving local '" << n << "' count: " << compiler->compiler->localCount << std::endl;
-        for (int i = compiler->compiler->localCount - 1; i >= 0; i--) {
-            Local* local = &compiler->compiler->locals[i];
-            // std::string ln(local->name.start, local->name.length);
-            // std::cout << "DEBUG: Checking against '" << ln << "'" << std::endl;
+    int resolveLocal(CompilerInstance* compilerInstance, Compiler* compiler, Token* name) {
+        for (int i = compiler->localCount - 1; i >= 0; i--) {
+            Local* local = &compiler->locals[i];
             if (identifiersEqual(name, &local->name)) {
                 if (local->depth == -1) {
-                    error(compiler, "Can't read local variable in its own initializer.");
+                    error(compilerInstance, "Can't read local variable in its own initializer.");
                 }
-                // std::cout << "DEBUG: Found local at index " << i << std::endl;
                 return i;
             }
         }
-        // std::cout << "DEBUG: Not found in locals." << std::endl;
+        return -1;
+    }
+
+    int addUpvalue(CompilerInstance* compilerInstance, Compiler* compiler, uint8_t index, bool isLocal) {
+        int upvalueCount = compiler->upvalueCount;
+
+        for (int i = 0; i < upvalueCount; i++) {
+            Upvalue* upvalue = &compiler->upvalues[i];
+            if (upvalue->index == index && upvalue->isLocal == isLocal) {
+                return i;
+            }
+        }
+
+        if (upvalueCount == 256) {
+            error(compilerInstance, "Too many closure variables in function.");
+            return 0;
+        }
+
+        compiler->upvalues[upvalueCount].isLocal = isLocal;
+        compiler->upvalues[upvalueCount].index = index;
+        return compiler->upvalueCount++;
+    }
+
+    int resolveUpvalue(CompilerInstance* compilerInstance, Compiler* compiler, Token* name) {
+        if (compiler->enclosing == nullptr) return -1;
+
+        int local = resolveLocal(compilerInstance, compiler->enclosing, name);
+        if (local != -1) {
+            compiler->enclosing->locals[local].isCaptured = true;
+            return addUpvalue(compilerInstance, compiler, (uint8_t)local, true);
+        }
+
+        int upvalue = resolveUpvalue(compilerInstance, compiler->enclosing, name);
+        if (upvalue != -1) {
+            return addUpvalue(compilerInstance, compiler, (uint8_t)upvalue, false);
+        }
+
         return -1;
     }
 
@@ -280,10 +320,13 @@ namespace cxxx {
 
     void namedVariable(CompilerInstance* compiler, Token name, bool canAssign) {
         uint8_t getOp, setOp;
-        int arg = resolveLocal(compiler, &name);
+        int arg = resolveLocal(compiler, compiler->compiler, &name);
         if (arg != -1) {
             getOp = OP_GET_LOCAL;
             setOp = OP_SET_LOCAL;
+        } else if ((arg = resolveUpvalue(compiler, compiler->compiler, &name)) != -1) {
+            getOp = OP_GET_UPVALUE;
+            setOp = OP_SET_UPVALUE;
         } else {
             arg = identifierConstant(compiler, &name, compiler->internTable);
             getOp = OP_GET_GLOBAL;
@@ -409,10 +452,13 @@ namespace cxxx {
         Token name = compiler->parser.previous;
 
         uint8_t getOp, setOp;
-        int arg = resolveLocal(compiler, &name);
+        int arg = resolveLocal(compiler, compiler->compiler, &name);
         if (arg != -1) {
             getOp = OP_GET_LOCAL;
             setOp = OP_SET_LOCAL;
+        } else if ((arg = resolveUpvalue(compiler, compiler->compiler, &name)) != -1) {
+            getOp = OP_GET_UPVALUE;
+            setOp = OP_SET_UPVALUE;
         } else {
             arg = identifierConstant(compiler, &name, compiler->internTable);
             getOp = OP_GET_GLOBAL;
@@ -652,7 +698,11 @@ namespace cxxx {
         compiler->compiler->scopeDepth--;
         while (compiler->compiler->localCount > 0 &&
                compiler->compiler->locals[compiler->compiler->localCount - 1].depth > compiler->compiler->scopeDepth) {
-            emitByte(compiler, OP_POP);
+            if (compiler->compiler->locals[compiler->compiler->localCount - 1].isCaptured) {
+                emitByte(compiler, OP_CLOSE_UPVALUE);
+            } else {
+                emitByte(compiler, OP_POP);
+            }
             compiler->compiler->localCount--;
         }
     }
@@ -783,6 +833,7 @@ namespace cxxx {
         compiler.function = allocateFunction();
         compiler.type = type;
         compiler.localCount = 0;
+        compiler.upvalueCount = 0;
         compiler.scopeDepth = 0;
         compilerInstance->compiler = &compiler;
 
@@ -815,12 +866,17 @@ namespace cxxx {
         block(compilerInstance);
 
         ObjFunction* function = compiler.function;
+        function->upvalueCount = compiler.upvalueCount;
         emitReturn(compilerInstance);
 
         compilerInstance->compiler = compiler.enclosing;
 
         if (type != TYPE_SCRIPT) {
-             emitBytes(compilerInstance, OP_CONSTANT, makeConstant(compilerInstance, OBJ_VAL((Obj*)function)));
+             emitBytes(compilerInstance, OP_CLOSURE, makeConstant(compilerInstance, OBJ_VAL((Obj*)function)));
+             for (int i = 0; i < compiler.upvalueCount; i++) {
+                 emitByte(compilerInstance, compiler.upvalues[i].isLocal ? 1 : 0);
+                 emitByte(compilerInstance, compiler.upvalues[i].index);
+             }
         }
     }
 
@@ -935,6 +991,15 @@ namespace cxxx {
         compiler.enclosing = nullptr;
         compiler.function = allocateFunction();
         compiler.type = TYPE_SCRIPT;
+        compiler.localCount = 0;
+        compiler.upvalueCount = 0;
+        compiler.scopeDepth = 0;
+
+        Local* local = &compiler.locals[compiler.localCount++];
+        local->depth = 0;
+        local->isCaptured = false;
+        local->name.start = "";
+        local->name.length = 0;
 
         compilerInstance.compiler = &compiler;
         compilerInstance.currentClass = nullptr;

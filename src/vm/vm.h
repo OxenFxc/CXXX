@@ -31,7 +31,7 @@ namespace cxxx {
         InterpretResult interpret(ObjFunction* function);
 
         // Stack operations
-        void push(Value value);
+        bool push(Value value);
         Value pop();
         Value peek(int distance);
         bool stackEmpty();

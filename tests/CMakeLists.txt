@@ -19,6 +19,7 @@ set(TEST_SOURCES
     test_for_scope.cpp
     test_turing.cpp
     test_api_v2.cpp
+    test_stability_extended.cpp
 )
 
 foreach(TEST_SOURCE ${TEST_SOURCES})

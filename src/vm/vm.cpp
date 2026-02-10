@@ -31,15 +31,14 @@ namespace cxxx {
         openUpvalues = nullptr;
     }
 
-    void VM::push(Value value) {
+    bool VM::push(Value value) {
         if (stackTop - stack >= STACK_MAX) {
             std::cerr << "Stack overflow!" << std::endl;
-            // In a real robust system, we would signal error, but here we just return to avoid crash.
-            // Or better, set an error flag.
-            return;
+            return false;
         }
         *stackTop = value;
         stackTop++;
+        return true;
     }
 
     Value VM::pop() {
@@ -61,8 +60,8 @@ namespace cxxx {
 
     InterpretResult VM::interpret(ObjFunction* function) {
         ObjClosure* closure = allocateClosure(this, function);
-        push(OBJ_VAL((Obj*)closure));
-        callValue(OBJ_VAL((Obj*)closure), 0);
+        if (!push(OBJ_VAL((Obj*)closure))) return InterpretResult::RUNTIME_ERROR;
+        if (!callValue(OBJ_VAL((Obj*)closure), 0)) return InterpretResult::RUNTIME_ERROR;
 
         return run();
     }
@@ -77,6 +76,7 @@ namespace cxxx {
         #define READ_BYTE() (*frame->ip++)
         #define READ_CONSTANT() (frame->closure->function->chunk.constants[READ_BYTE()])
         #define READ_STRING() ((ObjString*)READ_CONSTANT().as.obj)
+        #define PUSH(value) do { if (!push(value)) return InterpretResult::RUNTIME_ERROR; } while(false)
 
         for (;;) {
             #ifdef DEBUG_TRACE_EXECUTION
@@ -94,7 +94,7 @@ namespace cxxx {
             switch (instruction = READ_BYTE()) {
                 case OP_CONSTANT: {
                     Value constant = READ_CONSTANT();
-                    push(constant);
+                    PUSH(constant);
                     break;
                 }
                 case OP_ADD: {
@@ -104,11 +104,11 @@ namespace cxxx {
                         std::string s = a->str + b->str;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
+                        PUSH(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else if (peek(0).isNumber() && peek(1).isNumber()) {
                         double b = pop().asNumber();
                         double a = pop().asNumber();
-                        push(NUMBER_VAL(a + b));
+                        PUSH(NUMBER_VAL(a + b));
                     } else if (isObjType(peek(0), OBJ_STRING) && peek(1).isNumber()) {
                         // Number + String -> String
                         ObjString* b = (ObjString*)peek(0).as.obj;
@@ -121,7 +121,7 @@ namespace cxxx {
                         std::string s = aStr + b->str;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
+                        PUSH(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else if (peek(0).isNumber() && isObjType(peek(1), OBJ_STRING)) {
                         // String + Number -> String
                         double bVal = peek(0).asNumber();
@@ -134,7 +134,7 @@ namespace cxxx {
                         std::string s = a->str + bStr;
                         pop();
                         pop();
-                        push(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
+                        PUSH(OBJ_VAL((Obj*)copyString(this, s.c_str(), (int)s.length())));
                     } else {
                         std::cerr << "Operands must be numbers or strings." << std::endl;
                         return InterpretResult::RUNTIME_ERROR;
@@ -144,41 +144,45 @@ namespace cxxx {
                 case OP_SUBTRACT: {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
-                    push(NUMBER_VAL(a - b));
+                    PUSH(NUMBER_VAL(a - b));
                     break;
                 }
                 case OP_MULTIPLY: {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
-                    push(NUMBER_VAL(a * b));
+                    PUSH(NUMBER_VAL(a * b));
                     break;
                 }
                 case OP_DIVIDE: {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
-                    push(NUMBER_VAL(a / b));
+                    if (b == 0) {
+                        std::cerr << "Division by zero." << std::endl;
+                        return InterpretResult::RUNTIME_ERROR;
+                    }
+                    PUSH(NUMBER_VAL(a / b));
                     break;
                 }
                 case OP_NOT: {
-                    push(BOOL_VAL(isFalsey(pop())));
+                    PUSH(BOOL_VAL(isFalsey(pop())));
                     break;
                 }
                 case OP_EQUAL: {
                     Value b = pop();
                     Value a = pop();
-                    push(BOOL_VAL(valuesEqual(a, b)));
+                    PUSH(BOOL_VAL(valuesEqual(a, b)));
                     break;
                 }
                 case OP_GREATER: {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
-                    push(BOOL_VAL(a > b));
+                    PUSH(BOOL_VAL(a > b));
                     break;
                 }
                 case OP_LESS: {
                     double b = pop().asNumber();
                     double a = pop().asNumber();
-                    push(BOOL_VAL(a < b));
+                    PUSH(BOOL_VAL(a < b));
                     break;
                 }
                 case OP_JUMP: {
@@ -207,7 +211,7 @@ namespace cxxx {
                 }
                 case OP_GET_LOCAL: {
                     uint8_t slot = READ_BYTE();
-                    push(frame->slots[slot]);
+                    PUSH(frame->slots[slot]);
                     break;
                 }
                 case OP_SET_LOCAL: {
@@ -222,7 +226,7 @@ namespace cxxx {
                         std::cerr << "Undefined variable '" << name->str << "'." << std::endl;
                         return InterpretResult::RUNTIME_ERROR;
                     }
-                    push(value);
+                    PUSH(value);
                     break;
                 }
                 case OP_DEFINE_GLOBAL: {
@@ -241,7 +245,7 @@ namespace cxxx {
                     break;
                 }
                 case OP_CLASS: {
-                    push(OBJ_VAL((Obj*)allocateClass(this, READ_STRING())));
+                    PUSH(OBJ_VAL((Obj*)allocateClass(this, READ_STRING())));
                     break;
                 }
                 case OP_METHOD: {
@@ -259,7 +263,7 @@ namespace cxxx {
                     Value value;
                     if (instance->fields->get(name, &value)) {
                         pop(); // Instance.
-                        push(value);
+                        PUSH(value);
                         break;
                     }
 
@@ -277,7 +281,7 @@ namespace cxxx {
                     instance->fields->set(READ_STRING(), peek(0));
                     Value value = pop();
                     pop();
-                    push(value);
+                    PUSH(value);
                     break;
                 }
                 case OP_INVOKE: {
@@ -334,7 +338,7 @@ namespace cxxx {
                 case OP_CLOSURE: {
                     ObjFunction* function = (ObjFunction*)READ_CONSTANT().as.obj;
                     ObjClosure* closure = allocateClosure(this, function);
-                    push(OBJ_VAL((Obj*)closure));
+                    PUSH(OBJ_VAL((Obj*)closure));
                     for (int i = 0; i < closure->upvalueCount; i++) {
                         uint8_t isLocal = READ_BYTE();
                         uint8_t index = READ_BYTE();
@@ -348,7 +352,7 @@ namespace cxxx {
                 }
                 case OP_GET_UPVALUE: {
                     uint8_t slot = READ_BYTE();
-                    push(*frame->closure->upvalues[slot]->location);
+                    PUSH(*frame->closure->upvalues[slot]->location);
                     break;
                 }
                 case OP_SET_UPVALUE: {
@@ -371,7 +375,7 @@ namespace cxxx {
                     if (!isObjType(instance, OBJ_INSTANCE)) {
                         pop(); // superclass
                         pop(); // instance
-                        push(BOOL_VAL(false));
+                        PUSH(BOOL_VAL(false));
                         break;
                     }
 
@@ -390,11 +394,11 @@ namespace cxxx {
 
                     pop(); // superclass
                     pop(); // instance
-                    push(BOOL_VAL(found));
+                    PUSH(BOOL_VAL(found));
                     break;
                 }
                 case OP_NEGATE: {
-                    push(NUMBER_VAL(-pop().asNumber()));
+                    PUSH(NUMBER_VAL(-pop().asNumber()));
                     break;
                 }
                 case OP_RETURN: {
@@ -403,12 +407,12 @@ namespace cxxx {
                     frameCount--;
                     if (frameCount == 0) {
                         pop();
-                        push(result);
+                        PUSH(result);
                         return InterpretResult::OK;
                     }
 
                     stackTop = frame->slots;
-                    push(result);
+                    PUSH(result);
                     frame = &frames[frameCount - 1];
                     break;
                 }
@@ -470,7 +474,7 @@ namespace cxxx {
             if (current->methods->get(name, &method)) {
                 ObjBoundMethod* bound = allocateBoundMethod(this, peek(0), (ObjClosure*)method.as.obj);
                 pop();
-                push(OBJ_VAL((Obj*)bound));
+                if (!push(OBJ_VAL((Obj*)bound))) return false;
                 return true;
             }
             current = current->superclass;
@@ -518,7 +522,7 @@ namespace cxxx {
             NativeFn native = ((ObjNative*)callee.as.obj)->function;
             Value result = native(this, argCount, stackTop - argCount);
             stackTop -= argCount + 1;
-            push(result);
+            if (!push(result)) return false;
             return true;
         }
         std::cerr << "Can only call functions and classes." << std::endl;
